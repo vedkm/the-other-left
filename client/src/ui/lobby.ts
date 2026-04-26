@@ -91,7 +91,22 @@ export function renderWaiting(state: PublicState) {
     });
   } else {
     const start = p.querySelector<HTMLButtonElement>("#btn-start")!;
-    start.addEventListener("click", () => store.startGame());
+    let clicked = false;
+    const trigger = (ev?: Event) => {
+      ev?.preventDefault();
+      if (clicked) return;
+      clicked = true;
+      start.textContent = "Starting…";
+      store.startGame();
+      setTimeout(() => {
+        if (store.state?.phase === "ready") {
+          clicked = false;
+          start.textContent = "Start game";
+        }
+      }, 2500);
+    };
+    start.addEventListener("click", trigger);
+    start.addEventListener("pointerdown", trigger);
   }
 }
 
@@ -105,9 +120,30 @@ export function renderCrash(state: PublicState) {
     </div>
     <p class="muted">You have been separated.</p>
     <button class="primary" id="btn-find">Find each other</button>
+    <p class="error" id="find-err"></p>
   `);
   const find = p.querySelector<HTMLButtonElement>("#btn-find")!;
-  find.addEventListener("click", () => store.beginReunion());
+  const err  = p.querySelector<HTMLParagraphElement>("#find-err")!;
+  let clicked = false;
+  const trigger = (ev?: Event) => {
+    ev?.preventDefault();
+    if (clicked) return;
+    clicked = true;
+    find.textContent = "Finding…";
+    err.textContent = "";
+    store.beginReunion();
+    // If state hasn't moved on within 2.5s, re-enable for retry.
+    setTimeout(() => {
+      if (store.state?.phase === "crashed") {
+        clicked = false;
+        find.textContent = "Find each other";
+        err.textContent = "Connection hiccup. Tap again.";
+      }
+    }, 2500);
+  };
+  // click covers desktop + iOS click; pointerdown adds zero-latency mobile fallback.
+  find.addEventListener("click", trigger);
+  find.addEventListener("pointerdown", trigger);
 }
 
 export function renderComplete(state: PublicState) {
@@ -122,7 +158,22 @@ export function renderComplete(state: PublicState) {
     </div>
   `);
   const restart = p.querySelector<HTMLButtonElement>("#btn-restart")!;
-  restart.addEventListener("click", () => store.restartRound());
+  let clicked = false;
+  const trigger = (ev?: Event) => {
+    ev?.preventDefault();
+    if (clicked) return;
+    clicked = true;
+    restart.textContent = "Loading…";
+    store.restartRound();
+    setTimeout(() => {
+      if (store.state?.phase === "complete") {
+        clicked = false;
+        restart.textContent = "Play again";
+      }
+    }, 2500);
+  };
+  restart.addEventListener("click", trigger);
+  restart.addEventListener("pointerdown", trigger);
 }
 
 export function renderDisconnected() {

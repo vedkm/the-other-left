@@ -163,6 +163,7 @@ export class DriveScene extends Phaser.Scene {
 
     this.events.once("shutdown", () => {
       this.unsubscribe?.();
+      this.tweens.killAll();
       this.cameras.main.stopFollow();
       this.scale.off("resize", onResize);
     });

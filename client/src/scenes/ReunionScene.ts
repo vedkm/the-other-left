@@ -103,6 +103,7 @@ export class ReunionScene extends Phaser.Scene {
     this.scale.on("resize", onResize);
     this.events.once("shutdown", () => {
       this.unsubscribe?.();
+      this.tweens.killAll();
       this.scale.off("resize", onResize);
     });
   }

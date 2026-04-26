@@ -1,7 +1,10 @@
 import { store } from "../net";
 import type { PublicState } from "../types";
 import { sfx, isMuted, setMuted } from "../audio";
-import { turnLeft as gameTurnLeft, turnRight as gameTurnRight } from "../../../shared/game.js";
+import {
+  turnLeft as gameTurnLeft, turnRight as gameTurnRight,
+  pickEndingLine,
+} from "../../../shared/game.js";
 import type { Direction } from "../../../shared/game";
 
 const overlay = document.getElementById("overlay")!;
@@ -27,10 +30,8 @@ function showToast(msg: string) {
   setTimeout(() => t.remove(), 3000);
 }
 
-// Wire global toast handler once.
 store.onError((msg) => showToast(msg));
 
-// Re-derive landing if URL has /room/CODE.
 function urlRoomCode(): string | null {
   const m = window.location.pathname.match(/^\/room\/([A-Za-z0-9]{2,8})\/?$/);
   return m ? m[1].toUpperCase() : null;
@@ -40,8 +41,8 @@ export function renderLanding() {
   const initial = urlRoomCode() ?? "";
   const p = panel(`
     <h1 class="title">The Other Left</h1>
-    <p class="tagline">A two-player game about trust, directions, and emotional damage.</p>
-    <button class="primary" id="btn-create">Create a room</button>
+    <p class="tagline">A two-player game about Saturday errands and emotional damage.</p>
+    <button class="primary" id="btn-create">Start a Saturday</button>
     <div class="divider"><span>or</span></div>
     <div class="row">
       <input class="code-input" id="code-input" maxlength="4" placeholder="CODE" value="${initial}" />
@@ -63,7 +64,6 @@ export function renderLanding() {
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
   input.focus();
 
-  // If we landed on /room/CODE, auto-join after a tick once socket is ready.
   if (initial.length >= 2) {
     setTimeout(() => store.joinRoom(initial), 150);
   }
@@ -79,10 +79,8 @@ export function renderWaiting(state: PublicState) {
     <div class="bigcode">${state.code}</div>
     <p class="muted">You are the <strong>${isDriver ? "Driver" : "Navigator"}</strong>${both ? "" : ". Send your partner the code or this link:"}</p>
     ${both ? "" : `<div class="codeblock" id="link">${link}</div>
-                   <div class="row">
-                     <button id="btn-copy" class="ghost">Copy link</button>
-                   </div>`}
-    ${both ? `<button class="primary" id="btn-start">Start game</button>` : ""}
+                   <div class="row"><button id="btn-copy" class="ghost">Copy link</button></div>`}
+    ${both ? `<button class="primary" id="btn-start">Start the Saturday</button>` : ""}
   `);
 
   if (!both) {
@@ -103,7 +101,7 @@ export function renderWaiting(state: PublicState) {
       setTimeout(() => {
         if (store.state?.phase === "ready") {
           clicked = false;
-          start.textContent = "Start game";
+          start.textContent = "Start the Saturday";
         }
       }, 2500);
     };
@@ -112,69 +110,24 @@ export function renderWaiting(state: PublicState) {
   }
 }
 
-export function renderCrash(state: PublicState) {
-  const arg = state.argument ?? ["Things were said.", "Things were misheard."];
-  const p = panel(`
-    <h2 class="subtitle">You crashed.</h2>
-    <div class="argument">
-      <p><span class="speaker">Driver:</span>${escapeHtml(arg[0])}</p>
-      <p><span class="speaker">Navigator:</span>${escapeHtml(arg[1])}</p>
-    </div>
-    <p class="muted">You have been separated.</p>
-    <button class="primary" id="btn-find">Find each other</button>
-    <p class="error" id="find-err"></p>
-  `);
-  const find = p.querySelector<HTMLButtonElement>("#btn-find")!;
-  const err  = p.querySelector<HTMLParagraphElement>("#find-err")!;
-  let clicked = false;
-
-  // Listen for server failure reasons specific to this action.
-  const offFail = store.onActionFailed(({ action, reason }) => {
-    if (action !== "begin_reunion") return;
-    clicked = false;
-    find.textContent = "Find each other";
-    err.textContent = `Server said: ${reason}`;
-  });
-
-  const trigger = (ev?: Event) => {
-    ev?.preventDefault();
-    if (clicked) return;
-    clicked = true;
-    find.textContent = "Finding…";
-    err.textContent = "";
-    if (!store.connected) {
-      err.textContent = "Not connected to server. Reconnecting…";
-      clicked = false;
-      find.textContent = "Find each other";
-      return;
-    }
-    store.beginReunion();
-    setTimeout(() => {
-      if (store.state?.phase === "crashed") {
-        clicked = false;
-        find.textContent = "Find each other";
-        if (!err.textContent) err.textContent = "No response from server. Tap again.";
-      }
-    }, 3000);
-  };
-  find.addEventListener("click", trigger);
-  find.addEventListener("pointerdown", trigger);
-  // Clean up the failure listener when this modal is replaced.
-  const observer = new MutationObserver(() => {
-    if (!document.contains(p)) { offFail(); observer.disconnect(); }
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-}
-
 export function renderComplete(state: PublicState) {
-  const win = state.outcome === "destination_reached";
+  const win = state.outcome === "perfect";
+  const [topLine, botLine] = pickEndingLine(win ? "perfect" : "tired");
+  const isNewBest = state.score === state.bestScoreThisSession && state.score > 0;
+  const errandsDone = state.errands.filter((e) => e.done).length;
+
   const p = panel(`
-    <h2 class="subtitle">${win ? "You made it." : "Reunited."}</h2>
-    <p class="muted">${win
-      ? "Relationship survived the drive."
-      : "You found each other again. Honestly, that is also a win."}</p>
+    <h2 class="subtitle">${win ? "Perfect Saturday." : "Forget it. Let's go home."}</h2>
+    <p class="muted">${escapeHtml(topLine)}<br/>${escapeHtml(botLine)}</p>
+    <div class="stats">
+      <div class="stat"><div class="stat-num">${state.score}</div><div class="stat-label">SCORE</div></div>
+      <div class="stat"><div class="stat-num">${errandsDone}<span class="stat-of">/${state.errands.length}</span></div><div class="stat-label">ERRANDS</div></div>
+      <div class="stat"><div class="stat-num">${state.bestCombo}×</div><div class="stat-label">BEST COMBO</div></div>
+      <div class="stat"><div class="stat-num">${state.crashes}</div><div class="stat-label">CRASHES</div></div>
+    </div>
+    ${isNewBest ? `<p class="new-best">★ NEW PERSONAL BEST ★</p>` : `<p class="muted">Best this session: ${state.bestScoreThisSession}</p>`}
     <div class="row">
-      <button class="primary" id="btn-restart">Play again</button>
+      <button class="primary" id="btn-restart">Another Saturday</button>
     </div>
   `);
   const restart = p.querySelector<HTMLButtonElement>("#btn-restart")!;
@@ -188,7 +141,7 @@ export function renderComplete(state: PublicState) {
     setTimeout(() => {
       if (store.state?.phase === "complete") {
         clicked = false;
-        restart.textContent = "Play again";
+        restart.textContent = "Another Saturday";
       }
     }, 2500);
   };
@@ -211,18 +164,20 @@ export function renderDisconnected() {
 export function renderStatusBar(state: PublicState) {
   const bar = document.createElement("div");
   bar.className = "statusbar";
-  const distHtml = (state.phase === "driving" || state.phase === "crashed")
-    ? `<span class="dot"></span><span>Distance <strong>${state.distance}</strong></span>`
-    : "";
-  const brakeHtml = (state.phase === "driving" && state.braking)
-    ? `<span class="dot"></span><span class="brake-indicator">BRAKING ${state.brakeTicks}</span>`
-    : "";
+  const showLive = state.phase === "driving";
+  const patiencePct = showLive ? Math.max(0, Math.min(100, (state.patience / state.patienceMax) * 100)) : 100;
+  const patienceColor = patiencePct > 50 ? "#7bd389" : patiencePct > 25 ? "#ffce4d" : "#ff5a5a";
+
   bar.innerHTML = `
     <span class="role">${state.yourRole === "driver" ? "Driver" : "Navigator"}</span>
     <span class="dot"></span>
-    <span>Room <span class="room-code">${state.code}</span></span>
-    ${distHtml}
-    ${brakeHtml}
+    <span class="room-code">${state.code}</span>
+    ${showLive ? `
+      <span class="dot"></span>
+      <span class="score-pill">${state.score}</span>
+      ${state.combo > 0 ? `<span class="combo-pill">${state.combo}×</span>` : ""}
+      <span class="patience-wrap"><span class="patience-bar"><span class="patience-fill" style="width:${patiencePct}%; background:${patienceColor}"></span></span></span>
+    ` : ""}
     <button class="mute-btn" id="btn-mute" title="${isMuted() ? "Unmute" : "Mute"}">${isMuted() ? "🔇" : "🔊"}</button>
   `;
   overlay.appendChild(bar);
@@ -241,23 +196,32 @@ export function renderHint(text: string) {
   overlay.appendChild(h);
 }
 
-// Maps a cardinal direction to the on-screen arrow that points that way.
+// Errand strip: visible to both players. Compact icon list with completion state.
+export function renderErrandStrip(state: PublicState) {
+  const wrap = document.createElement("div");
+  wrap.className = "errand-strip";
+  const errandsHtml = state.errands.map((e) => `
+    <div class="errand-chip ${e.done ? "done" : ""}" title="${escapeHtml(e.label)}">
+      <span class="errand-icon">${e.icon}</span>
+      <span class="errand-name">${escapeHtml(e.label)}</span>
+    </div>
+  `).join("");
+  const homeReachable = state.errands.every((e) => e.done);
+  wrap.innerHTML = `
+    ${errandsHtml}
+    ${homeReachable ? `<div class="errand-chip home"><span class="errand-icon">🏠</span><span class="errand-name">Go home!</span></div>` : ""}
+  `;
+  overlay.appendChild(wrap);
+}
+
 const DIR_ARROW: Record<Direction, string> = {
-  north: "↑",
-  east:  "→",
-  south: "↓",
-  west:  "←",
+  north: "↑", east: "→", south: "↓", west: "←",
 };
 
 export function renderDriverDpad(state: PublicState) {
-  // Three big thumb-sized zones across the bottom of the screen.
-  // Each turn button shows the arrow pointing in the direction the car
-  // will end up facing on screen, so there's no left-vs-right confusion
-  // when the car has rotated.
   const dir = state.car.direction;
   const leftArrow  = DIR_ARROW[gameTurnLeft(dir)];
   const rightArrow = DIR_ARROW[gameTurnRight(dir)];
-
   const wrap = document.createElement("div");
   wrap.className = "driver-controls";
   wrap.innerHTML = `
@@ -284,39 +248,6 @@ export function renderDriverDpad(state: PublicState) {
     zone.addEventListener("pointerdown", handler);
   });
   overlay.appendChild(wrap);
-}
-
-export function renderReunionDpad() {
-  const wrap = document.createElement("div");
-  wrap.className = "dpad-wrap";
-  wrap.innerHTML = `
-    <button data-act="left">◀</button>
-    <button data-act="up">▲</button>
-    <button data-act="down">▼</button>
-    <button data-act="right">▶</button>
-  `;
-  wrap.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
-    b.addEventListener("click", () => {
-      const act = b.dataset.act as "up" | "down" | "left" | "right";
-      sfx.step();
-      store.reunionInput(act);
-    });
-  });
-  overlay.appendChild(wrap);
-}
-
-export function renderMiniMap(state: PublicState) {
-  // Tiny "you are here" chip on the navigator, showing how far the car has driven
-  if (state.yourRole !== "navigator") return;
-  const total = 25; // approximate path length on mvp map
-  const progress = Math.min(1, state.distance / total);
-  const chip = document.createElement("div");
-  chip.className = "minimap-chip";
-  chip.innerHTML = `
-    <div class="meter"><div class="meter-fill" style="width:${Math.round(progress * 100)}%"></div></div>
-    <div class="meter-label">${state.distance} tiles · ${Math.round(progress * 100)}% to ★</div>
-  `;
-  overlay.appendChild(chip);
 }
 
 function escapeHtml(s: string): string {

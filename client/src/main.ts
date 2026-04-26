@@ -3,19 +3,18 @@ import "./style.css";
 import { store } from "./net";
 import type { PublicState, Phase } from "./types";
 import { DriveScene } from "./scenes/DriveScene";
-import { ReunionScene } from "./scenes/ReunionScene";
 import {
-  renderLanding, renderWaiting, renderCrash, renderComplete,
-  renderStatusBar, renderHint, renderDriverDpad, renderReunionDpad,
-  renderMiniMap, clearOverlay,
+  renderLanding, renderWaiting, renderComplete,
+  renderStatusBar, renderHint, renderDriverDpad,
+  renderErrandStrip, clearOverlay,
 } from "./ui/lobby";
 import { sfx } from "./audio";
 
 let phaserGame: Phaser.Game | null = null;
 let booted = false;
-let activeScene: "drive" | "reunion" | null = null;
+let activeScene: "drive" | null = null;
 let lastPhase: Phase | null = null;
-let pendingShow: { name: "drive" | "reunion" | null; state: PublicState | null } | null = null;
+let pendingShow: { name: "drive" | null; state: PublicState | null } | null = null;
 
 function ensureGame(): Phaser.Game {
   if (phaserGame) return phaserGame;
@@ -31,7 +30,6 @@ function ensureGame(): Phaser.Game {
     },
   });
   phaserGame.scene.add("DriveScene", DriveScene, false);
-  phaserGame.scene.add("ReunionScene", ReunionScene, false);
 
   phaserGame.events.once("ready", () => {
     booted = true;
@@ -42,7 +40,6 @@ function ensureGame(): Phaser.Game {
     }
   });
 
-  // Keep canvas in sync with viewport (orientation change, browser chrome resize)
   window.addEventListener("resize", () => {
     if (phaserGame) phaserGame.scale.resize(window.innerWidth, window.innerHeight);
   });
@@ -52,37 +49,19 @@ function ensureGame(): Phaser.Game {
   return phaserGame;
 }
 
-function applyShow(name: "drive" | "reunion" | null, state: PublicState | null) {
+function applyShow(name: "drive" | null, state: PublicState | null) {
   const g = phaserGame!;
   try {
-    if (g.scene.getScene("DriveScene")?.scene.isActive())   g.scene.stop("DriveScene");
-    if (g.scene.getScene("ReunionScene")?.scene.isActive()) g.scene.stop("ReunionScene");
+    if (g.scene.getScene("DriveScene")?.scene.isActive()) g.scene.stop("DriveScene");
   } catch (e) { console.warn("[scene stop]", e); }
   activeScene = name;
   if (!name || !state) return;
   try {
-    if (name === "drive")   g.scene.start("DriveScene",   { state });
-    if (name === "reunion") g.scene.start("ReunionScene", { state });
+    if (name === "drive") g.scene.start("DriveScene", { state });
   } catch (e) { console.warn("[scene start]", e); }
 }
 
-// Periodic state-poll: while waiting in transient phases, ask the server every
-// 2s for the latest state. Recovers from a missed broadcast.
-let pollTimer: ReturnType<typeof setInterval> | null = null;
-function pollWhileStuck(active: boolean) {
-  if (active && !pollTimer) {
-    pollTimer = setInterval(() => {
-      if (!store.connected) return;
-      const p = store.state?.phase;
-      if (p === "crashed" || p === "complete") store.requestState();
-    }, 2000);
-  } else if (!active && pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-}
-
-function showScene(name: "drive" | "reunion" | null, state: PublicState | null) {
+function showScene(name: "drive" | null, state: PublicState | null) {
   ensureGame();
   if (booted) applyShow(name, state);
   else        pendingShow = { name, state };
@@ -100,10 +79,25 @@ function showGameCanvas() {
   gameRoot().style.transition = "opacity .25s ease";
 }
 
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+function pollWhileStuck(active: boolean) {
+  if (active && !pollTimer) {
+    pollTimer = setInterval(() => {
+      if (!store.connected) return;
+      const p = store.state?.phase;
+      if (p === "complete") store.requestState();
+    }, 2000);
+  } else if (!active && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
 function render(state: PublicState | null) {
   if (!state) {
     showScene(null, null);
     hideGameCanvas();
+    pollWhileStuck(false);
     renderLanding();
     return;
   }
@@ -112,82 +106,53 @@ function render(state: PublicState | null) {
   const prev = lastPhase;
   lastPhase = phase;
 
-  // Decide scene + overlays
   if (phase === "waiting" || phase === "ready") {
     showScene(null, null);
     hideGameCanvas();
+    pollWhileStuck(false);
     renderWaiting(state);
     return;
   }
 
   if (phase === "driving") {
-    showGameCanvas();
-    if (activeScene !== "drive") {
-      showScene("drive", state);
-    }
     clearOverlay();
     renderStatusBar(state);
+    renderErrandStrip(state);
+    showGameCanvas();
+    if (activeScene !== "drive") showScene("drive", state);
+    pollWhileStuck(false);
     if (state.yourRole === "driver") {
       renderDriverDpad(state);
-      // The big buttons are self-explanatory; only nudge during countdown.
       if (state.countdownRemainingMs > 0) {
         renderHint("Get ready. Car drives itself. Tap LEFT/RIGHT to steer, BRAKE to stop.");
       }
     } else {
-      renderMiniMap(state);
+      const remaining = state.errands.filter((e) => !e.done).length;
       const hint = state.countdownRemainingMs > 0
         ? "Get ready. They see only two tiles ahead."
-        : "Yell directions. They see only two tiles ahead — dotted line shows where they're heading.";
+        : remaining === 0
+          ? "All errands done. Send them home (🏠 in your top-left)."
+          : `${remaining} errand${remaining > 1 ? "s" : ""} left. Yell directions — dotted line shows where they're heading.`;
       renderHint(hint);
     }
-    return;
-  }
-
-  if (phase === "crashed") {
-    // DOM updates first so a Phaser hiccup can't strand the modal.
-    clearOverlay();
-    renderStatusBar(state);
-    showGameCanvas();
-    if (activeScene !== "drive") showScene("drive", state);
-    pollWhileStuck(true);
-    setTimeout(() => {
-      if (store.state?.phase === "crashed") renderCrash(state);
-    }, 380);
-    return;
-  }
-
-  if (phase === "reunion") {
-    clearOverlay();
-    renderStatusBar(state);
-    renderReunionDpad();
-    renderHint("Walk with arrows / WASD. You see 5×5 around you.");
-    showGameCanvas();
-    if (activeScene !== "reunion") showScene("reunion", state);
-    pollWhileStuck(false);
     return;
   }
 
   if (phase === "complete") {
     clearOverlay();
     renderStatusBar(state);
-    if (state.outcome === "reunited") {
-      if (activeScene !== "reunion") showScene("reunion", state);
-    } else {
-      if (activeScene !== "drive") showScene("drive", state);
-    }
+    if (activeScene !== "drive") showScene("drive", state);
     if (prev !== "complete") {
-      if (state.outcome === "destination_reached") sfx.win();
+      if (state.outcome === "perfect") sfx.win();
     }
     pollWhileStuck(true);
-    const delay = state.outcome === "reunited" ? 1100 : 700;
     setTimeout(() => {
       if (store.state?.phase === "complete") renderComplete(state);
-    }, delay);
+    }, 700);
     return;
   }
   pollWhileStuck(false);
 }
 
-// Boot
 store.subscribe((s) => render(s));
 render(null);

@@ -240,21 +240,33 @@ export function renderHint(text: string) {
 }
 
 export function renderDriverDpad() {
+  // Three big thumb-sized zones across the bottom third of the screen.
+  // Tap anywhere within a zone to trigger its action — no aiming required.
   const wrap = document.createElement("div");
-  wrap.className = "dpad-wrap driver-dpad";
+  wrap.className = "driver-controls";
   wrap.innerHTML = `
-    <button data-act="turn_left"  data-sfx="turn"  title="Turn left (A / Left)">↺</button>
-    <button data-act="brake"      data-sfx="brake" class="brake" title="Brake (S / Down / Space)">BRAKE</button>
-    <button data-act="turn_right" data-sfx="turn"  title="Turn right (D / Right)">↻</button>
+    <div class="ctrl-zone left"   data-act="turn_left"  aria-label="Turn left">
+      <div class="ctrl-btn"><span class="arrow">←</span><span class="ctrl-label">LEFT</span></div>
+    </div>
+    <div class="ctrl-zone center" data-act="brake"      aria-label="Brake">
+      <div class="ctrl-btn brake">BRAKE</div>
+    </div>
+    <div class="ctrl-zone right"  data-act="turn_right" aria-label="Turn right">
+      <div class="ctrl-btn"><span class="arrow">→</span><span class="ctrl-label">RIGHT</span></div>
+    </div>
   `;
-  wrap.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
-    b.addEventListener("click", () => {
-      const act = b.dataset.act as "forward" | "turn_left" | "turn_right" | "brake";
-      const cue = b.dataset.sfx;
-      if (cue === "turn") sfx.turn();
-      else if (cue === "brake") sfx.brake();
+  wrap.querySelectorAll<HTMLDivElement>(".ctrl-zone").forEach((zone) => {
+    const act = zone.dataset.act as "turn_left" | "turn_right" | "brake";
+    const handler = (ev: Event) => {
+      ev.preventDefault();
+      zone.classList.add("tapped");
+      setTimeout(() => zone.classList.remove("tapped"), 150);
+      if (act === "brake") sfx.brake();
+      else                 sfx.turn();
       store.driverInput(act);
-    });
+    };
+    // pointerdown for instant response; covers touch + mouse + pen.
+    zone.addEventListener("pointerdown", handler);
   });
   overlay.appendChild(wrap);
 }

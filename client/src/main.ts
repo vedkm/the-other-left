@@ -129,15 +129,15 @@ function render(state: PublicState | null) {
     renderStatusBar(state);
     if (state.yourRole === "driver") {
       renderDriverDpad();
-      const hint = state.countdownRemainingMs > 0
-        ? "Get ready. The car will start moving on its own."
-        : "A/← turn left · D/→ turn right · S/↓/space BRAKE · the car drives itself";
-      renderHint(hint);
+      // The big buttons are self-explanatory; only nudge during countdown.
+      if (state.countdownRemainingMs > 0) {
+        renderHint("Get ready. Car drives itself. Tap LEFT/RIGHT to steer, BRAKE to stop.");
+      }
     } else {
       renderMiniMap(state);
       const hint = state.countdownRemainingMs > 0
-        ? "Get ready. They can only see two tiles ahead."
-        : "Yell directions. They can only see two tiles ahead. The dotted line shows where they'll go.";
+        ? "Get ready. They see only two tiles ahead."
+        : "Yell directions. They see only two tiles ahead — dotted line shows where they're heading.";
       renderHint(hint);
     }
     return;

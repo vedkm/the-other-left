@@ -3,6 +3,23 @@ import type { PublicState } from "./types";
 
 type Listener = (state: PublicState | null) => void;
 
+function getClientId(): string {
+  const KEY = "tol_clientId";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = (crypto.randomUUID && crypto.randomUUID()) || (Date.now().toString(36) + Math.random().toString(36).slice(2));
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+}
+
+const ACTION_REASONS: Record<string, string> = {
+  no_session:      "Your session expired. Reload to start over.",
+  no_room:         "The room is gone. Reload to start over.",
+  partner_missing: "Waiting for your partner to reconnect…",
+  wrong_phase:     "Hmm, the game state changed. Try again.",
+};
+
 class Store {
   state: PublicState | null = null;
   socket: Socket;
@@ -10,7 +27,14 @@ class Store {
   private errorListeners = new Set<(msg: string) => void>();
 
   constructor() {
-    this.socket = io({ transports: ["websocket", "polling"] });
+    const clientId = getClientId();
+    this.socket = io({
+      transports: ["websocket", "polling"],
+      auth: { clientId },
+      reconnection: true,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 3000,
+    });
 
     this.socket.on("state_updated", (s: PublicState) => {
       this.state = s;
@@ -23,6 +47,13 @@ class Store {
       this.state = null;
       this.notify();
       this.error("Your partner disconnected.");
+    });
+
+    this.socket.on("action_failed", ({ action, reason }: { action: string; reason: string }) => {
+      const baseReason = reason.split(":")[0];
+      const friendly = ACTION_REASONS[baseReason] ?? `That didn't work (${reason}).`;
+      this.error(friendly);
+      console.warn(`[action_failed] ${action}: ${reason}`);
     });
   }
 

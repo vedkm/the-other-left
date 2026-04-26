@@ -28,15 +28,29 @@ app.get("/room/:code", (_req, res) => {
   res.sendFile(join(distDir, "index.html"));
 });
 
-const rooms = new Map();
-const sessions = new Map();
+const RECONNECT_GRACE_MS = 30_000;
+
+// Identity is the persistent clientId from the browser (UUID in localStorage).
+// Sockets come and go (network blips, phone sleep) — clientId survives.
+const rooms          = new Map();   // code     → room
+const sessions       = new Map();   // clientId → { code, role }
+const clientToSocket = new Map();   // clientId → socket.id
+const expiryTimers   = new Map();   // clientId → timeout handle
+
+function sendToClient(clientId, event, data) {
+  const sid = clientToSocket.get(clientId);
+  if (sid) io.to(sid).emit(event, data);
+}
 
 function publicState(room, role) {
   return {
     code: room.code,
     phase: room.phase,
     yourRole: role,
-    partnerConnected: !!(room.players.driver && room.players.navigator),
+    partnerConnected: !!(
+      room.players.driver && clientToSocket.has(room.players.driver) &&
+      room.players.navigator && clientToSocket.has(room.players.navigator)
+    ),
     map: { width: MAP.width, height: MAP.height, tiles: MAP.tiles, zones: MAP.zones },
     start: MAP.start,
     destination: MAP.destination,
@@ -58,9 +72,14 @@ function publicState(room, role) {
 
 function broadcastRoom(room) {
   for (const role of ["driver", "navigator"]) {
-    const sid = room.players[role];
-    if (sid) io.to(sid).emit("state_updated", publicState(room, role));
+    const cid = room.players[role];
+    if (cid) sendToClient(cid, "state_updated", publicState(room, role));
   }
+}
+
+function bothConnected(room) {
+  return !!(room.players.driver && clientToSocket.has(room.players.driver)
+         && room.players.navigator && clientToSocket.has(room.players.navigator));
 }
 
 function stopTick(room) {
@@ -69,7 +88,6 @@ function stopTick(room) {
     room.tickInterval = null;
   }
 }
-
 function startTick(room) {
   stopTick(room);
   room.pendingStartAt = Date.now() + COUNTDOWN_MS;
@@ -80,7 +98,9 @@ function tickRoom(code) {
   const room = rooms.get(code);
   if (!room) return;
   if (room.phase !== "driving") { stopTick(room); return; }
-  if (Date.now() < room.pendingStartAt) return; // countdown still running
+  // Pause if a partner is missing — don't run the car into a wall while they're away.
+  if (!bothConnected(room)) return;
+  if (Date.now() < room.pendingStartAt) return;
 
   if (room.brakeTicks > 0) {
     room.brakeTicks--;
@@ -108,19 +128,18 @@ function tickRoom(code) {
     broadcastRoom(room);
     return;
   }
-  // valid move
   room.car = { ...room.car, x: next.x, y: next.y };
   room.distance++;
   broadcastRoom(room);
 }
 
-function leaveCurrentRoom(socket) {
-  const session = sessions.get(socket.id);
+function expireSession(clientId) {
+  const session = sessions.get(clientId);
   if (!session) return;
   const room = rooms.get(session.code);
-  sessions.delete(socket.id);
+  sessions.delete(clientId);
   if (!room) return;
-  if (room.players[session.role] === socket.id) {
+  if (room.players[session.role] === clientId) {
     room.players[session.role] = null;
   }
   if (!room.players.driver && !room.players.navigator) {
@@ -128,40 +147,93 @@ function leaveCurrentRoom(socket) {
     rooms.delete(room.code);
     return;
   }
-  // Pause/end the round on partner loss.
+  // True partner-loss after grace period — reset to a fresh round so the remaining player can wait for a new partner.
   stopTick(room);
-  if (room.phase === "driving" || room.phase === "crashed" || room.phase === "reunion") {
-    room.phase = "ready";
-    resetRound(room);
-  }
+  resetRound(room);
   const otherRole = session.role === "driver" ? "navigator" : "driver";
-  const otherSid = room.players[otherRole];
-  if (otherSid) io.to(otherSid).emit("partner_disconnected");
+  const otherCid = room.players[otherRole];
+  if (otherCid) sendToClient(otherCid, "partner_disconnected");
+}
+
+function fail(socket, action, reason) {
+  console.log(`[fail] ${action}: ${reason}`);
+  socket.emit("action_failed", { action, reason });
 }
 
 io.on("connection", (socket) => {
+  const clientId = socket.handshake.auth?.clientId;
+  if (!clientId || typeof clientId !== "string") {
+    socket.disconnect();
+    return;
+  }
+
+  // Cancel any pending expiry — they're back within the grace window.
+  const pending = expiryTimers.get(clientId);
+  if (pending) {
+    clearTimeout(pending);
+    expiryTimers.delete(clientId);
+  }
+
+  // If another socket previously claimed this clientId (duplicate tab, weird reconnect),
+  // disconnect the old one — last-tab-wins.
+  const previousSid = clientToSocket.get(clientId);
+  if (previousSid && previousSid !== socket.id) {
+    const old = io.sockets.sockets.get(previousSid);
+    if (old) old.disconnect();
+  }
+  clientToSocket.set(clientId, socket.id);
+
+  // Restore session if known, and notify partner that we're back.
+  const restoredSession = sessions.get(clientId);
+  if (restoredSession) {
+    const room = rooms.get(restoredSession.code);
+    if (room) {
+      socket.emit("state_updated", publicState(room, restoredSession.role));
+      const otherRole = restoredSession.role === "driver" ? "navigator" : "driver";
+      const otherCid = room.players[otherRole];
+      if (otherCid) {
+        // Tell both sides the partner-state changed (so any "disconnected" UI clears).
+        sendToClient(otherCid, "state_updated", publicState(room, otherRole));
+      }
+      // If we were driving, resume the countdown briefly so they can settle in.
+      if (room.phase === "driving" && bothConnected(room) && !room.tickInterval) {
+        startTick(room);
+      }
+    }
+  }
+
   socket.on("create_room", () => {
-    leaveCurrentRoom(socket);
+    expireSession(clientId);
     let code;
     do { code = makeRoomCode(); } while (rooms.has(code));
     const room = freshRoom(code);
-    room.players.driver = socket.id;
+    room.players.driver = clientId;
     rooms.set(code, room);
-    sessions.set(socket.id, { code, role: "driver" });
-    socket.emit("state_updated", publicState(room, "driver"));
+    sessions.set(clientId, { code, role: "driver" });
+    sendToClient(clientId, "state_updated", publicState(room, "driver"));
   });
 
   socket.on("join_room", ({ code }) => {
     const upper = (code || "").toUpperCase().trim();
     const room = rooms.get(upper);
     if (!room) { socket.emit("room_not_found"); return; }
+
+    // Already in this room? Just rebind silently (e.g., refresh during play).
+    if (room.players.driver === clientId || room.players.navigator === clientId) {
+      const role = room.players.driver === clientId ? "driver" : "navigator";
+      sessions.set(clientId, { code: upper, role });
+      sendToClient(clientId, "state_updated", publicState(room, role));
+      return;
+    }
+
     if (room.players.driver && room.players.navigator) {
       socket.emit("room_full"); return;
     }
-    leaveCurrentRoom(socket);
+
+    expireSession(clientId);
     const role = !room.players.driver ? "driver" : "navigator";
-    room.players[role] = socket.id;
-    sessions.set(socket.id, { code: upper, role });
+    room.players[role] = clientId;
+    sessions.set(clientId, { code: upper, role });
     if (room.phase === "waiting" && room.players.driver && room.players.navigator) {
       room.phase = "ready";
     }
@@ -169,12 +241,13 @@ io.on("connection", (socket) => {
   });
 
   socket.on("start_game", () => {
-    const session = sessions.get(socket.id);
-    if (!session) return;
+    const session = sessions.get(clientId);
+    if (!session)                      return fail(socket, "start_game", "no_session");
     const room = rooms.get(session.code);
-    if (!room) return;
-    if (!room.players.driver || !room.players.navigator) return;
-    if (room.phase !== "ready" && room.phase !== "complete") return;
+    if (!room)                         return fail(socket, "start_game", "no_room");
+    if (!bothConnected(room))          return fail(socket, "start_game", "partner_missing");
+    if (room.phase !== "ready" && room.phase !== "complete")
+                                       return fail(socket, "start_game", `wrong_phase:${room.phase}`);
     resetRound(room);
     room.phase = "driving";
     startTick(room);
@@ -182,32 +255,19 @@ io.on("connection", (socket) => {
   });
 
   socket.on("driver_input", ({ action }) => {
-    const session = sessions.get(socket.id);
+    const session = sessions.get(clientId);
     if (!session || session.role !== "driver") return;
     const room = rooms.get(session.code);
     if (!room || room.phase !== "driving") return;
 
-    if (action === "turn_left") {
-      room.car.direction = turnLeft(room.car.direction);
-      broadcastRoom(room);
-      return;
-    }
-    if (action === "turn_right") {
-      room.car.direction = turnRight(room.car.direction);
-      broadcastRoom(room);
-      return;
-    }
+    if (action === "turn_left")  { room.car.direction = turnLeft(room.car.direction);  broadcastRoom(room); return; }
+    if (action === "turn_right") { room.car.direction = turnRight(room.car.direction); broadcastRoom(room); return; }
     if (action === "brake") {
-      if (room.brakeTicks < BRAKE_MAX) {
-        room.brakeTicks++;
-        broadcastRoom(room);
-      }
+      if (room.brakeTicks < BRAKE_MAX) { room.brakeTicks++; broadcastRoom(room); }
       return;
     }
-    // "forward" (manual nudge) — useful during the countdown to lurch off the line.
     if (action === "forward") {
-      if (Date.now() < room.pendingStartAt) return; // ignore during countdown
-      // Single-step movement (same logic as tick) — gives keyboard expressiveness.
+      if (Date.now() < room.pendingStartAt) return;
       const next = forwardOf(room.car, room.car.direction);
       const result = classifyDriveTile(MAP, next.x, next.y);
       if (result === "win") {
@@ -230,15 +290,16 @@ io.on("connection", (socket) => {
       room.car = { ...room.car, x: next.x, y: next.y };
       room.distance++;
       broadcastRoom(room);
-      return;
     }
   });
 
   socket.on("begin_reunion", () => {
-    const session = sessions.get(socket.id);
-    if (!session) return;
+    const session = sessions.get(clientId);
+    if (!session)                      return fail(socket, "begin_reunion", "no_session");
     const room = rooms.get(session.code);
-    if (!room || room.phase !== "crashed") return;
+    if (!room)                         return fail(socket, "begin_reunion", "no_room");
+    if (!bothConnected(room))          return fail(socket, "begin_reunion", "partner_missing");
+    if (room.phase !== "crashed")      return fail(socket, "begin_reunion", `wrong_phase:${room.phase}`);
     room.driverAvatar    = { ...MAP.driverSpawnAfterCrash };
     room.navigatorAvatar = { ...MAP.navigatorSpawnAfterCrash };
     room.phase = "reunion";
@@ -246,7 +307,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("reunion_input", ({ action }) => {
-    const session = sessions.get(socket.id);
+    const session = sessions.get(clientId);
     if (!session) return;
     const room = rooms.get(session.code);
     if (!room || room.phase !== "reunion") return;
@@ -277,11 +338,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("restart_round", () => {
-    const session = sessions.get(socket.id);
-    if (!session) return;
+    const session = sessions.get(clientId);
+    if (!session)                      return fail(socket, "restart_round", "no_session");
     const room = rooms.get(session.code);
-    if (!room) return;
-    if (!room.players.driver || !room.players.navigator) return;
+    if (!room)                         return fail(socket, "restart_round", "no_room");
+    if (!bothConnected(room))          return fail(socket, "restart_round", "partner_missing");
     resetRound(room);
     room.phase = "driving";
     startTick(room);
@@ -289,7 +350,28 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    leaveCurrentRoom(socket);
+    if (clientToSocket.get(clientId) === socket.id) {
+      clientToSocket.delete(clientId);
+    }
+    // Pause the game until they're back (or grace period expires).
+    const session = sessions.get(clientId);
+    if (session) {
+      const room = rooms.get(session.code);
+      if (room) {
+        // Stop the tick — driver can't react while disconnected.
+        stopTick(room);
+        // Tell partner we're temporarily gone (they can show a "waiting" state).
+        const otherRole = session.role === "driver" ? "navigator" : "driver";
+        const otherCid = room.players[otherRole];
+        if (otherCid) sendToClient(otherCid, "state_updated", publicState(room, otherRole));
+      }
+      // Schedule grace-period expiry.
+      const t = setTimeout(() => {
+        if (!clientToSocket.has(clientId)) expireSession(clientId);
+        expiryTimers.delete(clientId);
+      }, RECONNECT_GRACE_MS);
+      expiryTimers.set(clientId, t);
+    }
   });
 });
 

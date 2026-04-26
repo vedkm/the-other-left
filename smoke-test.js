@@ -7,10 +7,13 @@ const TICK_MS = 900;
 const COUNTDOWN_MS = 2000;
 
 function client(name) {
-  const s = io(URL, { transports: ["websocket"] });
+  const clientId = `test-${name}-${Math.random().toString(36).slice(2)}`;
+  const s = io(URL, { transports: ["websocket"], auth: { clientId } });
   s.lastState = null;
   s.tag = name;
+  s.failures = [];
   s.on("state_updated", (st) => { s.lastState = st; });
+  s.on("action_failed", (f) => { s.failures.push(f); });
   return s;
 }
 

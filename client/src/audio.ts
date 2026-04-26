@@ -64,8 +64,16 @@ function noiseBurst(dur: number, lowpass: number, vol = 0.35) {
   src.start();
 }
 
+// Pentatonic scale (in Hz) — sounds good no matter where you stop.
+// Used for the rising combo hits.
+const COMBO_NOTES = [523, 587, 659, 784, 880, 988, 1175, 1319, 1568, 1760, 1976];
+
 export const sfx = {
-  engineTick() { pulse(85, 0.12, "sawtooth", 0.10); },
+  engineTick(combo = 0) {
+    // Engine pitch rises with combo — game literally sounds more frantic.
+    const base = 85 + Math.min(combo, 12) * 7;
+    pulse(base, 0.12, "sawtooth", 0.10);
+  },
   turn()       { pulse(440, 0.05, "square",  0.08); },
   brake()      { pulse(320, 0.18, "sawtooth", 0.10); },
   crash() {
@@ -73,15 +81,28 @@ export const sfx = {
     setTimeout(() => pulse(110, 0.18, "sawtooth", 0.18), 30);
     setTimeout(() => pulse(70, 0.25, "sawtooth", 0.16), 80);
   },
+  // Descending tone when a combo breaks — satisfyingly sad.
+  miss(fromCombo = 0) {
+    const start = COMBO_NOTES[Math.min(fromCombo, COMBO_NOTES.length - 1)] ?? 660;
+    pulse(start,        0.10, "triangle", 0.14);
+    setTimeout(() => pulse(start * 0.7, 0.10, "triangle", 0.13), 80);
+    setTimeout(() => pulse(start * 0.5, 0.16, "triangle", 0.12), 160);
+  },
+  // Each combo level plays a HIGHER note — stacks into a major-scale build-up.
+  comboHit(level = 1) {
+    const idx = Math.max(0, Math.min(COMBO_NOTES.length - 1, level - 1));
+    const freq = COMBO_NOTES[idx];
+    pulse(freq, 0.18, "triangle", 0.18);
+    // Bass thump on combo 4+ for extra weight.
+    if (level >= 4) setTimeout(() => pulse(freq / 4, 0.14, "sine", 0.18), 20);
+    // Sparkle on combo 7+ — tinkle on top.
+    if (level >= 7) setTimeout(() => pulse(freq * 2, 0.10, "triangle", 0.14), 40);
+  },
   step()       { pulse(540, 0.04, "triangle", 0.06); },
   win() {
-    pulse(523, 0.18, "triangle", 0.15);          // C
-    setTimeout(() => pulse(659, 0.18, "triangle", 0.15), 130);  // E
-    setTimeout(() => pulse(784, 0.30, "triangle", 0.18), 260);  // G
-  },
-  reunite() {
-    pulse(659, 0.16, "triangle", 0.16);
-    setTimeout(() => pulse(880, 0.30, "triangle", 0.18), 130);
+    pulse(523, 0.18, "triangle", 0.15);
+    setTimeout(() => pulse(659, 0.18, "triangle", 0.15), 130);
+    setTimeout(() => pulse(784, 0.30, "triangle", 0.18), 260);
   },
   countdown() { pulse(660, 0.10, "triangle", 0.14); },
   go()        { pulse(990, 0.20, "triangle", 0.18); },

@@ -55,7 +55,6 @@ export class DriveScene extends Phaser.Scene {
   private turnTween?: Phaser.Tweens.Tween;
   private unsubscribe?: () => void;
   private prevCrashes = 0;
-  private prevCombo = 0;
   private countdownStarted = false;
 
   constructor() { super("DriveScene"); }
@@ -88,7 +87,6 @@ export class DriveScene extends Phaser.Scene {
     if (!this.state) return;
     this.recomputeLayout();
     this.prevCrashes = this.state.crashes;
-    this.prevCombo = this.state.combo;
 
     if (!this.isDriver) {
       const board = this.add.graphics();
@@ -353,6 +351,68 @@ export class DriveScene extends Phaser.Scene {
     }
   }
 
+  private spawnComboCallout(level: number) {
+    const tiers: { min: number; word: string; color: string }[] = [
+      { min: 1,  word: "NICE",      color: "#ffce4d" },
+      { min: 2,  word: "GREAT",     color: "#ffae3a" },
+      { min: 3,  word: "FIRE",      color: "#ff7a59" },
+      { min: 5,  word: "ON FIRE!",  color: "#ff5a5a" },
+      { min: 7,  word: "INSANE",    color: "#ff3a8c" },
+      { min: 10, word: "GODLIKE",   color: "#c44ef0" },
+    ];
+    const tier = tiers.reduce((acc, t) => level >= t.min ? t : acc, tiers[0]);
+    const cx = this.cameras.main.midPoint.x;
+    const cy = this.cameras.main.midPoint.y - 65;
+
+    // Big combo word with overshoot scale-in
+    const word = this.add.text(cx, cy, tier.word, {
+      fontFamily: "Fraunces, serif",
+      fontSize: `${28 + Math.min(12, level * 1.5)}px`,
+      color: tier.color,
+      fontStyle: "700",
+      stroke: "#000",
+      strokeThickness: 3,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(2100).setScale(0.3).setAlpha(0);
+
+    const num = this.add.text(cx, cy + 30, `${level}× COMBO`, {
+      fontFamily: "Inter, sans-serif",
+      fontSize: "13px",
+      color: tier.color,
+      fontStyle: "800",
+      stroke: "#000",
+      strokeThickness: 2,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(2100).setAlpha(0);
+
+    // Punchy entrance
+    this.tweens.add({
+      targets: word,
+      scale: { from: 0.3, to: 1 },
+      alpha: { from: 0, to: 1 },
+      duration: 200,
+      ease: "Back.easeOut",
+    });
+    this.tweens.add({
+      targets: num,
+      alpha: { from: 0, to: 1 },
+      duration: 180,
+      delay: 80,
+    });
+
+    // Drift up while fading out
+    this.tweens.add({
+      targets: [word, num],
+      y: `-=18`,
+      alpha: 0,
+      delay: 480,
+      duration: 380,
+      ease: "Cubic.easeIn",
+      onComplete: () => { word.destroy(); num.destroy(); },
+    });
+
+    // Camera flash for high combos
+    if (level >= 5) this.cameras.main.flash(120, 255, 220, 100, false);
+  }
+
   private showCountdown() {
     const txt = this.add.text(
       this.cameras.main.midPoint.x,
@@ -392,8 +452,6 @@ export class DriveScene extends Phaser.Scene {
     this.prevCrashes = next.crashes;
     const newErrandDone = next.errands.filter((e) => e.done).length
                         > prev.errands.filter((e) => e.done).length;
-    const comboChanged = next.combo !== this.prevCombo;
-    this.prevCombo = next.combo;
 
     if (turned) {
       this.turnTween?.stop();
@@ -409,7 +467,7 @@ export class DriveScene extends Phaser.Scene {
     }
 
     if (movedTile) {
-      sfx.engineTick();
+      sfx.engineTick(next.combo);
       const { x, y } = this.worldOf(next.car.x, next.car.y);
       this.moveTween?.stop();
       this.moveTween = this.tweens.add({
@@ -443,21 +501,23 @@ export class DriveScene extends Phaser.Scene {
       if (!this.isDriver) this.drawMarkers();
     }
 
-    if (comboChanged && next.combo >= 3) {
-      // Subtle combo callout — only on combo 3+ so it's a reward, not noise.
-      const cx = this.cameras.main.midPoint.x;
-      const cy = this.cameras.main.midPoint.y - 50;
-      const color = next.combo >= 8 ? "#ff5a5a" : next.combo >= 5 ? "#ff7a59" : "#ffce4d";
-      const t = this.add.text(cx, cy, `${next.combo}×`, {
-        fontFamily: "Fraunces, serif", fontSize: "22px",
-        color, fontStyle: "700",
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(2100);
-      this.tweens.add({
-        targets: t,
-        y: cy - 18, alpha: { from: 1, to: 0 },
-        duration: 550, ease: "Cubic.easeOut",
-        onComplete: () => t.destroy(),
-      });
+    // Combo went up: fire dopamine on every level.
+    if (next.combo > prev.combo && next.combo >= 1) {
+      sfx.comboHit(next.combo);
+      this.spawnComboCallout(next.combo);
+    }
+    // Combo broke (was non-zero, now zero) — satisfyingly sad descending tone.
+    if (prev.combo > 0 && next.combo === 0 && next.phase === "driving") {
+      sfx.miss(prev.combo);
+    }
+    // Update the screen-edge glow level (driver only — looks weird with
+    // the navigator's overhead view).
+    if (this.isDriver) {
+      const glow = document.getElementById("combo-glow");
+      if (glow) {
+        const level = Math.min(5, Math.ceil(next.combo / 2));
+        glow.className = next.combo > 0 ? `combo-${level}` : "";
+      }
     }
 
     if (newCrash) {

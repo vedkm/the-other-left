@@ -171,7 +171,7 @@ export function renderStatusBar(state: PublicState) {
   bar.innerHTML = live
     ? `
       <span class="score-pill">${state.score}</span>
-      ${state.combo > 0 ? `<span class="combo-pill">${state.combo}×</span>` : ""}
+      ${state.combo > 0 ? `<span class="combo-pill" data-level="${Math.min(5, Math.ceil(state.combo / 2))}" style="transform: scale(${1 + Math.min(0.4, (state.combo - 1) * 0.06)})">${state.combo}×</span>` : ""}
       <span class="patience-wrap"><span class="patience-bar"><span class="patience-fill" style="width:${patiencePct}%; background:${patienceColor}"></span></span></span>
       <button class="mute-btn" id="btn-mute" title="${isMuted() ? "Unmute" : "Mute"}">${isMuted() ? "🔇" : "🔊"}</button>
     `

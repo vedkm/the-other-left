@@ -125,25 +125,43 @@ export function renderCrash(state: PublicState) {
   const find = p.querySelector<HTMLButtonElement>("#btn-find")!;
   const err  = p.querySelector<HTMLParagraphElement>("#find-err")!;
   let clicked = false;
+
+  // Listen for server failure reasons specific to this action.
+  const offFail = store.onActionFailed(({ action, reason }) => {
+    if (action !== "begin_reunion") return;
+    clicked = false;
+    find.textContent = "Find each other";
+    err.textContent = `Server said: ${reason}`;
+  });
+
   const trigger = (ev?: Event) => {
     ev?.preventDefault();
     if (clicked) return;
     clicked = true;
     find.textContent = "Finding…";
     err.textContent = "";
+    if (!store.connected) {
+      err.textContent = "Not connected to server. Reconnecting…";
+      clicked = false;
+      find.textContent = "Find each other";
+      return;
+    }
     store.beginReunion();
-    // If state hasn't moved on within 2.5s, re-enable for retry.
     setTimeout(() => {
       if (store.state?.phase === "crashed") {
         clicked = false;
         find.textContent = "Find each other";
-        err.textContent = "Connection hiccup. Tap again.";
+        if (!err.textContent) err.textContent = "No response from server. Tap again.";
       }
-    }, 2500);
+    }, 3000);
   };
-  // click covers desktop + iOS click; pointerdown adds zero-latency mobile fallback.
   find.addEventListener("click", trigger);
   find.addEventListener("pointerdown", trigger);
+  // Clean up the failure listener when this modal is replaced.
+  const observer = new MutationObserver(() => {
+    if (!document.contains(p)) { offFail(); observer.disconnect(); }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 
 export function renderComplete(state: PublicState) {

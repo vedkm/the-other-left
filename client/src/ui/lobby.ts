@@ -164,22 +164,23 @@ export function renderDisconnected() {
 export function renderStatusBar(state: PublicState) {
   const bar = document.createElement("div");
   bar.className = "statusbar";
-  const showLive = state.phase === "driving";
-  const patiencePct = showLive ? Math.max(0, Math.min(100, (state.patience / state.patienceMax) * 100)) : 100;
+  const live = state.phase === "driving" || state.phase === "complete";
+  const patiencePct = Math.max(0, Math.min(100, (state.patience / state.patienceMax) * 100));
   const patienceColor = patiencePct > 50 ? "#7bd389" : patiencePct > 25 ? "#ffce4d" : "#ff5a5a";
 
-  bar.innerHTML = `
-    <span class="role">${state.yourRole === "driver" ? "Driver" : "Navigator"}</span>
-    <span class="dot"></span>
-    <span class="room-code">${state.code}</span>
-    ${showLive ? `
-      <span class="dot"></span>
+  bar.innerHTML = live
+    ? `
       <span class="score-pill">${state.score}</span>
       ${state.combo > 0 ? `<span class="combo-pill">${state.combo}×</span>` : ""}
       <span class="patience-wrap"><span class="patience-bar"><span class="patience-fill" style="width:${patiencePct}%; background:${patienceColor}"></span></span></span>
-    ` : ""}
-    <button class="mute-btn" id="btn-mute" title="${isMuted() ? "Unmute" : "Mute"}">${isMuted() ? "🔇" : "🔊"}</button>
-  `;
+      <button class="mute-btn" id="btn-mute" title="${isMuted() ? "Unmute" : "Mute"}">${isMuted() ? "🔇" : "🔊"}</button>
+    `
+    : `
+      <span class="role">${state.yourRole === "driver" ? "Driver" : "Navigator"}</span>
+      <span class="dot"></span>
+      <span class="room-code">${state.code}</span>
+      <button class="mute-btn" id="btn-mute" title="${isMuted() ? "Unmute" : "Mute"}">${isMuted() ? "🔇" : "🔊"}</button>
+    `;
   overlay.appendChild(bar);
   const m = bar.querySelector<HTMLButtonElement>("#btn-mute");
   m?.addEventListener("click", () => {

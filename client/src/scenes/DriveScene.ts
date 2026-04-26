@@ -5,8 +5,9 @@ import { projectTrajectory } from "../../../shared/game.js";
 import { store } from "../net";
 import { sfx } from "../audio";
 
-const HUD_TOP = 70;
-const HUD_BOT = 220;     // driver controls + errand strip
+const HUD_TOP = 76;
+const HUD_BOT_DRV = 210;
+const HUD_BOT_NAV = 80;
 const SIDE_MARGIN = 12;
 const TILE_MIN = 18;
 const TILE_MAX_NAV = 40;
@@ -70,8 +71,7 @@ export class DriveScene extends Phaser.Scene {
     const w = this.scale.width;
     const h = this.scale.height;
     const availW = Math.max(120, w - SIDE_MARGIN * 2);
-    // Driver has a bigger HUD bottom (controls + errand strip), navigator has less.
-    const reservedBot = this.isDriver ? HUD_BOT : 130;
+    const reservedBot = this.isDriver ? HUD_BOT_DRV : HUD_BOT_NAV;
     const availH = Math.max(120, h - HUD_TOP - reservedBot);
     const cols = this.state.map.width;
     const rows = this.state.map.height;
@@ -177,35 +177,47 @@ export class DriveScene extends Phaser.Scene {
   private drawMarkers() {
     if (!this.markerLayer) return;
     this.markerLayer.removeAll(true);
-    // Home marker (always)
-    const home = this.state.home;
-    const hx = this.originX + home.x * this.TILE + this.TILE / 2;
-    const hy = this.originY + home.y * this.TILE + this.TILE / 2;
-    const homeRing = this.add.graphics();
-    homeRing.lineStyle(3, COLORS.home, 0.95);
-    homeRing.strokeCircle(hx, hy, this.TILE * 0.4);
-    const homeLabel = this.add.text(hx, hy, "🏠",
-      { fontSize: `${Math.floor(this.TILE * 0.55)}px` }).setOrigin(0.5);
-    this.markerLayer.add([homeRing, homeLabel]);
 
-    // Active errand markers
+    const drawMarker = (
+      worldX: number, worldY: number,
+      icon: string, color: number,
+      pulse: boolean,
+    ) => {
+      // Position the Graphics object at the marker center, then draw the
+      // circle at (0, 0) so any later transform pivots around the center.
+      const ring = this.add.graphics({ x: worldX, y: worldY });
+      const radius = this.TILE * 0.42;
+      // Soft fill behind the ring for legibility on the road colour.
+      ring.fillStyle(0xfff8ee, 0.55);
+      ring.fillCircle(0, 0, radius);
+      ring.lineStyle(2, color, 1);
+      ring.strokeCircle(0, 0, radius);
+      const iconSize = Math.max(14, Math.floor(this.TILE * 0.5));
+      const txt = this.add.text(worldX, worldY, icon,
+        { fontSize: `${iconSize}px` }).setOrigin(0.5);
+      this.markerLayer!.add([ring, txt]);
+      if (pulse) {
+        this.tweens.add({
+          targets: ring,
+          alpha: { from: 1, to: 0.55 },
+          duration: 1100, yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+        });
+      }
+    };
+
+    const home = this.state.home;
+    drawMarker(
+      this.originX + home.x * this.TILE + this.TILE / 2,
+      this.originY + home.y * this.TILE + this.TILE / 2,
+      "🏠", COLORS.home, false,
+    );
     for (const e of this.state.errands) {
       if (e.done) continue;
-      const ex = this.originX + e.x * this.TILE + this.TILE / 2;
-      const ey = this.originY + e.y * this.TILE + this.TILE / 2;
-      const ring = this.add.graphics();
-      ring.lineStyle(3, COLORS.errandActive, 1);
-      ring.strokeCircle(ex, ey, this.TILE * 0.42);
-      const icon = this.add.text(ex, ey, e.icon,
-        { fontSize: `${Math.floor(this.TILE * 0.55)}px` }).setOrigin(0.5);
-      this.markerLayer.add([ring, icon]);
-      // Pulse the rings
-      this.tweens.add({
-        targets: ring,
-        scale: { from: 1, to: 1.15 },
-        alpha: { from: 1, to: 0.7 },
-        duration: 800, yoyo: true, repeat: -1, ease: "Sine.easeInOut",
-      });
+      drawMarker(
+        this.originX + e.x * this.TILE + this.TILE / 2,
+        this.originY + e.y * this.TILE + this.TILE / 2,
+        e.icon, COLORS.errandActive, true,
+      );
     }
   }
 
@@ -416,36 +428,34 @@ export class DriveScene extends Phaser.Scene {
 
     if (newErrandDone) {
       sfx.win();
-      // Quick visual: floating "+score" near the car
       const earned = next.score - prev.score;
       const { x, y } = this.worldOf(next.car.x, next.car.y);
-      const txt = this.add.text(x, y - 16, `+${earned}`, {
-        fontFamily: "Inter, sans-serif", fontSize: "20px",
-        color: "#ffce4d", fontStyle: "800",
+      const txt = this.add.text(x, y - 8, `+${earned}`, {
+        fontFamily: "Inter, sans-serif", fontSize: "14px",
+        color: "#ff7a59", fontStyle: "700",
       }).setOrigin(0.5).setDepth(2000);
       this.tweens.add({
         targets: txt,
-        y: y - 60, alpha: 0, scale: 1.4,
-        duration: 900, ease: "Cubic.easeOut",
+        y: y - 36, alpha: { from: 1, to: 0 },
+        duration: 750, ease: "Cubic.easeOut",
         onComplete: () => txt.destroy(),
       });
-      // Refresh markers (active set changed).
       if (!this.isDriver) this.drawMarkers();
     }
 
-    if (comboChanged && next.combo > 1) {
-      // Combo hype text
+    if (comboChanged && next.combo >= 3) {
+      // Subtle combo callout — only on combo 3+ so it's a reward, not noise.
       const cx = this.cameras.main.midPoint.x;
-      const cy = this.cameras.main.midPoint.y - 80;
-      const t = this.add.text(cx, cy, `${next.combo}× COMBO`, {
-        fontFamily: "Fraunces, serif", fontSize: "30px",
-        color: next.combo >= 5 ? "#ff5a5a" : "#ffce4d",
-        fontStyle: "700",
+      const cy = this.cameras.main.midPoint.y - 50;
+      const color = next.combo >= 8 ? "#ff5a5a" : next.combo >= 5 ? "#ff7a59" : "#ffce4d";
+      const t = this.add.text(cx, cy, `${next.combo}×`, {
+        fontFamily: "Fraunces, serif", fontSize: "22px",
+        color, fontStyle: "700",
       }).setOrigin(0.5).setScrollFactor(0).setDepth(2100);
       this.tweens.add({
         targets: t,
-        scale: { from: 0.8, to: 1.3 }, alpha: { from: 1, to: 0 },
-        duration: 700, ease: "Cubic.easeOut",
+        y: cy - 18, alpha: { from: 1, to: 0 },
+        duration: 550, ease: "Cubic.easeOut",
         onComplete: () => t.destroy(),
       });
     }

@@ -95,63 +95,57 @@ html, body {
 /* ===== Status bar (top) ===== */
 .statusbar {
   position: absolute;
-  top: calc(8px + var(--safe-top));
+  top: calc(6px + var(--safe-top));
   z-index: 15;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  background: rgba(255, 253, 246, .92);
+  background: rgba(255, 253, 246, .94);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 6px 14px;
-  box-shadow: var(--shadow);
-  font-size: 13px;
+  padding: 4px 10px 4px 12px;
+  box-shadow: 0 2px 8px rgba(140, 80, 20, .1);
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
-  max-width: calc(100vw - 24px);
-  flex-wrap: wrap;
-  justify-content: center;
+  max-width: calc(100vw - 16px);
+  white-space: nowrap;
 }
-.statusbar .role { color: var(--ink); font-weight: 600; }
-.statusbar .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--border); }
-.statusbar .room-code { font-family: "Fraunces", serif; letter-spacing: 3px; color: var(--ink); }
+.statusbar .role { color: var(--ink); font-weight: 600; font-size: 12px; }
+.statusbar .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+.statusbar .room-code { font-family: "Fraunces", serif; letter-spacing: 2px; color: var(--ink); font-size: 12px; }
 
 .statusbar .score-pill {
-  background: #fff5dd;
   color: var(--ink);
   font-weight: 800;
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 14px;
+  font-size: 13px;
   font-family: "Fraunces", serif;
-  letter-spacing: 0.5px;
-  border: 1px solid var(--border);
-  min-width: 38px;
+  letter-spacing: 0.3px;
+  min-width: 32px;
   text-align: center;
 }
 .statusbar .combo-pill {
   background: #ff7a59;
   color: #fff8ee;
   font-weight: 800;
-  padding: 2px 10px;
+  padding: 1px 8px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 11px;
   letter-spacing: 0.5px;
-  animation: combo-pulse .35s ease-in-out infinite alternate;
+  animation: combo-pulse 1.3s ease-in-out infinite alternate;
 }
-@keyframes combo-pulse { from { transform: scale(1); } to { transform: scale(1.08); } }
+@keyframes combo-pulse { from { opacity: 0.85; } to { opacity: 1; } }
 
 .statusbar .patience-wrap {
   display: inline-flex;
   align-items: center;
-  margin-left: 4px;
 }
 .statusbar .patience-bar {
   display: inline-block;
-  width: 80px;
+  width: 90px;
   height: 6px;
   background: #f3e7d0;
   border-radius: 999px;
@@ -162,13 +156,17 @@ html, body {
   display: block;
   height: 100%;
   border-radius: 999px;
-  transition: width .25s cubic-bezier(.2, .8, .3, 1), background .25s ease;
+  transition: width .35s cubic-bezier(.2, .8, .3, 1), background .35s ease;
 }
 
 .statusbar .mute-btn {
-  border: none; padding: 0 4px; font-size: 16px;
+  border: none; padding: 0; font-size: 14px;
   background: transparent; cursor: pointer;
   -webkit-appearance: none;
+  min-height: 0;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: 2px;
 }
 
 /* ===== Hint bar (just above d-pad) ===== */
@@ -196,48 +194,66 @@ html, body {
 /* ===== Errand strip (visible to both players during driving) ===== */
 .errand-strip {
   position: absolute;
-  top: calc(50px + var(--safe-top));
+  top: calc(40px + var(--safe-top));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
   justify-content: center;
-  max-width: calc(100vw - 24px);
+  align-items: center;
+  max-width: calc(100vw - 12px);
   z-index: 12;
   pointer-events: none;
+  flex-wrap: nowrap;
 }
 .errand-chip {
   background: rgba(255, 253, 246, 0.95);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 10px 4px 6px;
-  display: flex;
+  border-radius: 8px;
+  padding: 3px 7px 3px 5px;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: 4px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--ink);
-  box-shadow: 0 2px 6px rgba(140, 80, 20, .08);
-  transition: opacity .25s ease, transform .25s ease;
+  box-shadow: 0 1px 3px rgba(140, 80, 20, .08);
+  transition: opacity .25s ease;
+  white-space: nowrap;
+  height: 24px;
 }
-.errand-chip .errand-icon { font-size: 14px; }
+.errand-chip .errand-icon { font-size: 13px; line-height: 1; }
+.errand-chip .errand-name { font-size: 10px; letter-spacing: .2px; }
 .errand-chip.done {
-  opacity: 0.45;
+  opacity: 0.4;
   text-decoration: line-through;
-  background: rgba(123, 211, 137, 0.18);
-  border-color: rgba(123, 211, 137, 0.5);
+  background: rgba(123, 211, 137, 0.16);
+  border-color: rgba(123, 211, 137, 0.4);
 }
 .errand-chip.home {
   background: #7bd389;
   color: #0e2a14;
   border-color: #5cb56b;
   font-weight: 800;
-  animation: home-pulse .8s ease-in-out infinite alternate;
+  animation: home-pulse 1.2s ease-in-out infinite alternate;
 }
 @keyframes home-pulse {
-  from { transform: scale(1); box-shadow: 0 2px 6px rgba(123, 211, 137, .35); }
-  to   { transform: scale(1.06); box-shadow: 0 4px 12px rgba(123, 211, 137, .55); }
+  from { opacity: 0.85; }
+  to   { opacity: 1; }
+}
+
+/* On phones, hide errand names and show only icons in a row of small squares. */
+@media (max-width: 600px) {
+  .errand-chip {
+    width: 28px; height: 28px;
+    padding: 0; gap: 0;
+    border-radius: 8px;
+    justify-content: center;
+  }
+  .errand-chip .errand-name { display: none; }
+  .errand-chip .errand-icon { font-size: 16px; }
+  .errand-chip.home { width: auto; padding: 0 10px; }
+  .errand-chip.home .errand-name { display: inline; }
 }
 
 /* ===== End-of-round stats grid ===== */
@@ -538,10 +554,8 @@ input.code-input:focus { outline: 2px solid var(--primary); outline-offset: 2px;
   .hintbar { font-size: 11px; padding: 5px 12px; bottom: calc(88px + var(--safe-bottom)); }
   .dpad-wrap { padding: 6px 8px; }
   .dpad-wrap button { width: 48px; height: 48px; font-size: 20px; }
-  .dpad-wrap.driver-dpad button.brake { width: 76px; font-size: 11px; }
-  .statusbar { padding: 4px 12px; font-size: 12px; gap: 8px; }
-  .minimap-chip { top: calc(48px + var(--safe-top)); padding: 4px 9px; }
-  .minimap-chip .meter-label { font-size: 9px; }
+  .statusbar { padding: 4px 10px; font-size: 11px; gap: 6px; }
+  .errand-strip { top: calc(34px + var(--safe-top)); }
 }
 
 @media (max-width: 520px) {

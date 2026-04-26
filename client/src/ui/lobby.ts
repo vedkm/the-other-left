@@ -115,16 +115,22 @@ export function renderComplete(state: PublicState) {
   const [topLine, botLine] = pickEndingLine(win ? "perfect" : "tired");
   const isNewBest = state.score === state.bestScoreThisSession && state.score > 0;
   const errandsDone = state.errands.filter((e) => e.done).length;
+  const reunited = state.reunionBonus > 0;
+  const reunionSec = (state.reunionElapsedMs / 1000).toFixed(1);
 
   const p = panel(`
     <h2 class="subtitle">${win ? "Perfect Saturday." : "Forget it. Let's go home."}</h2>
     <p class="muted">${escapeHtml(topLine)}<br/>${escapeHtml(botLine)}</p>
     <div class="stats">
-      <div class="stat"><div class="stat-num">${state.score}</div><div class="stat-label">SCORE</div></div>
+      <div class="stat"><div class="stat-num">${state.score}</div><div class="stat-label">FINAL SCORE</div></div>
       <div class="stat"><div class="stat-num">${errandsDone}<span class="stat-of">/${state.errands.length}</span></div><div class="stat-label">ERRANDS</div></div>
       <div class="stat"><div class="stat-num">${state.bestCombo}×</div><div class="stat-label">BEST COMBO</div></div>
       <div class="stat"><div class="stat-num">${state.crashes}</div><div class="stat-label">CRASHES</div></div>
     </div>
+    ${reunited
+      ? `<p class="reunion-line">Reunited in <strong>${reunionSec}s</strong> · <span class="reunion-bonus">+${state.reunionBonus}</span></p>`
+      : `<p class="muted">Reunion timed out — no bonus.</p>`
+    }
     ${isNewBest ? `<p class="new-best">★ NEW PERSONAL BEST ★</p>` : `<p class="muted">Best this session: ${state.bestScoreThisSession}</p>`}
     <div class="row">
       <button class="primary" id="btn-restart">Another Saturday</button>
@@ -164,23 +170,36 @@ export function renderDisconnected() {
 export function renderStatusBar(state: PublicState) {
   const bar = document.createElement("div");
   bar.className = "statusbar";
-  const live = state.phase === "driving" || state.phase === "complete";
+
+  const isDriving  = state.phase === "driving";
+  const isReunion  = state.phase === "reunion";
+  const isComplete = state.phase === "complete";
+
   const patiencePct = Math.max(0, Math.min(100, (state.patience / state.patienceMax) * 100));
   const patienceColor = patiencePct > 50 ? "#7bd389" : patiencePct > 25 ? "#ffce4d" : "#ff5a5a";
+  const reunionSec = Math.max(0, Math.ceil(state.reunionTimeRemainingMs / 1000));
 
-  bar.innerHTML = live
-    ? `
+  let inner = "";
+  if (isDriving || isComplete) {
+    inner = `
       <span class="score-pill">${state.score}</span>
       ${state.combo > 0 ? `<span class="combo-pill" data-level="${Math.min(5, Math.ceil(state.combo / 2))}" style="transform: scale(${1 + Math.min(0.4, (state.combo - 1) * 0.06)})">${state.combo}×</span>` : ""}
       <span class="patience-wrap"><span class="patience-bar"><span class="patience-fill" style="width:${patiencePct}%; background:${patienceColor}"></span></span></span>
-      <button class="mute-btn" id="btn-mute" title="${isMuted() ? "Unmute" : "Mute"}">${isMuted() ? "🔇" : "🔊"}</button>
-    `
-    : `
+    `;
+  } else if (isReunion) {
+    inner = `
+      <span class="score-pill bleeding">${state.score}</span>
+      <span class="reunion-timer">⏱ ${reunionSec}s</span>
+      <span class="bleed-pill">−${state.score > 0 ? 8 : 0}/s</span>
+    `;
+  } else {
+    inner = `
       <span class="role">${state.yourRole === "driver" ? "Driver" : "Navigator"}</span>
       <span class="dot"></span>
       <span class="room-code">${state.code}</span>
-      <button class="mute-btn" id="btn-mute" title="${isMuted() ? "Unmute" : "Mute"}">${isMuted() ? "🔇" : "🔊"}</button>
     `;
+  }
+  bar.innerHTML = `${inner}<button class="mute-btn" id="btn-mute" title="${isMuted() ? "Unmute" : "Mute"}">${isMuted() ? "🔇" : "🔊"}</button>`;
   overlay.appendChild(bar);
   const m = bar.querySelector<HTMLButtonElement>("#btn-mute");
   m?.addEventListener("click", () => {
@@ -247,6 +266,28 @@ export function renderDriverDpad(state: PublicState) {
       store.driverInput(act);
     };
     zone.addEventListener("pointerdown", handler);
+  });
+  overlay.appendChild(wrap);
+}
+
+// Reunion d-pad — small 4-direction floating control. Both roles can move.
+export function renderReunionDpad() {
+  const wrap = document.createElement("div");
+  wrap.className = "dpad-wrap reunion-dpad";
+  wrap.innerHTML = `
+    <button data-act="left">◀</button>
+    <button data-act="up">▲</button>
+    <button data-act="down">▼</button>
+    <button data-act="right">▶</button>
+  `;
+  wrap.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
+    const handler = (ev: Event) => {
+      ev.preventDefault();
+      const act = b.dataset.act as "up" | "down" | "left" | "right";
+      sfx.step();
+      store.reunionInput(act);
+    };
+    b.addEventListener("pointerdown", handler);
   });
   overlay.appendChild(wrap);
 }

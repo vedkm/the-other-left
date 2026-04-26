@@ -1,6 +1,7 @@
 export type Direction = "north" | "east" | "south" | "west";
 export type Tile = "S" | "." | "#" | "X";
 export type Outcome = "perfect" | "tired" | null;
+export type Phase = "waiting" | "ready" | "driving" | "reunion" | "complete";
 
 export interface MapData {
   id: string;
@@ -47,6 +48,16 @@ export const ERRAND_COUNT_MAX: number;
 export const ERRAND_BASE_SCORE: number;
 export const PERFECT_SATURDAY_BONUS: number;
 export const PATIENCE_BONUS_PER_POINT: number;
+export const REUNION_DECAY_PER_SEC: number;
+export const REUNION_BASE_BONUS: number;
+export const REUNION_MIN_BONUS: number;
+export const REUNION_BONUS_DECAY_PER_SEC: number;
+export const REUNION_TIMEOUT_MS: number;
+export const REUNION_VIS_RADIUS: number;
+export const REUNION_SPAWNS: {
+  driver:    { x: number; y: number; label: string };
+  navigator: { x: number; y: number; label: string };
+};
 
 export const CRASH_BARKS: [string, string][];
 export const ENDING_LINES: { perfect: [string, string][]; tired: [string, string][] };
@@ -63,6 +74,11 @@ export function classifyDriveTile(
   map: { width: number; height: number; tiles: Tile[][] },
   x: number, y: number
 ): "move" | "crash";
+export function isReunionWalkable(
+  map: { width: number; height: number; tiles: Tile[][] },
+  x: number, y: number
+): boolean;
+export function pickReunionBark(elapsedMs: number): [string, string];
 export function projectTrajectory(
   map: { width: number; height: number; tiles: Tile[][] },
   car: { x: number; y: number; direction: Direction },
@@ -77,7 +93,7 @@ export function pickEndingLine(outcome: "perfect" | "tired"): [string, string];
 
 export interface Room {
   code: string;
-  phase: "waiting" | "ready" | "driving" | "complete";
+  phase: Phase;
   players: { driver: string | null; navigator: string | null };
   car: { x: number; y: number; direction: Direction };
   crashAt: { x: number; y: number } | null;
@@ -94,6 +110,12 @@ export interface Room {
   crashes: number;
   outcome: Outcome;
   bestScoreThisSession: number;
+  driverAvatar: { x: number; y: number } | null;
+  navigatorAvatar: { x: number; y: number } | null;
+  reunionStartedAt: number;
+  reunionDecayInterval: ReturnType<typeof setInterval> | null;
+  reunionBonus: number;
+  reunionElapsedMs: number;
 }
 
 export function freshRoom(code: string): Room;

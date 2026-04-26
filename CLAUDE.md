@@ -74,6 +74,15 @@ To deploy: just `git push origin main`. Render builds + deploys automatically (~
 - All errands done + return to home → `outcome: "perfect"` → +500 bonus + (patience × 5).
 - Patience hits 0 → `outcome: "tired"` → small partial-patience bonus.
 
+**Reunion phase** (between driving-end and the end screen, runs every round):
+- Spawns driver + navigator at opposite map corners (Maracas Bay vs home).
+- Each player walks independently with 5×5 visibility (`ReunionScene`).
+- Score decays at `REUNION_DECAY_PER_SEC` (8/s) while separated — visible "−8/s" pill in HUD.
+- Touching = stop the bleed + scaled bonus: `max(50, 500 − elapsedSec × 12)`.
+  Faster reunion = bigger bonus.
+- Hard timeout `REUNION_TIMEOUT_MS` (60s): no bonus, just finalize.
+- Reunion timer pauses when a partner disconnects; resumes on reconnect (the missed time isn't counted).
+
 **Score / combo / juice**:
 - +100 per errand × `comboMultiplier(combo)` = `1 + combo * 0.2`.
 - Combo callouts: NICE → GREAT → FIRE → ON FIRE! → INSANE → GODLIKE.
@@ -111,10 +120,14 @@ To deploy: just `git push origin main`. Render builds + deploys automatically (~
 | `POST_CRASH_FREEZE_MS` | 1500 | how long the car freezes after a crash |
 | `ERRAND_COUNT_MIN/MAX` | 4 / 5 | how many errands per round |
 | `PERFECT_SATURDAY_BONUS` | 500 | bonus for completing all + home |
+| `REUNION_DECAY_PER_SEC` | 8 | score bleed per second of reunion |
+| `REUNION_BASE_BONUS` | 500 | reunion bonus at 0s (drops 12/s) |
+| `REUNION_MIN_BONUS` | 50 | floor for reunion bonus |
+| `REUNION_TIMEOUT_MS` | 60000 | reunion auto-times-out without bonus |
 
 ## Design decisions worth remembering
 
-- **Tried & rejected**: single-destination MVP map, infinite endless mode, reunion-phase-on-every-crash, top-down with relative-direction buttons (replaced with screen-direction arrows).
+- **Tried & rejected**: single-destination MVP map, infinite endless mode, reunion-phase-on-every-crash (replaced with reunion-phase-as-finale), top-down with relative-direction buttons (replaced with screen-direction arrows).
 - **Phaser version**: pinned to `^3.80.0`. Phaser 4 dropped the default export and has rough edges; don't auto-upgrade.
 - **Mobile-first**: the canvas uses `Phaser.Scale.RESIZE` and fills the viewport. No letterboxing. Tile size auto-fits per viewport. Both portrait + landscape work; portrait is the natural fit.
 - **Why Render not Cloudflare**: Cloudflare Pages is serverless, doesn't fit our persistent WebSocket server. Cloudflare Workers + Durable Objects is possible but a full server rewrite. Stick with Render.

@@ -189,6 +189,51 @@ html, body {
   transition: width .35s cubic-bezier(.2, .8, .3, 1), background .35s ease;
 }
 
+/* Reunion phase HUD: timer + score-bleed indicator. */
+.statusbar .reunion-timer {
+  font-family: "Fraunces", serif;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ink);
+  letter-spacing: 0.5px;
+}
+.statusbar .bleed-pill {
+  background: #ff5a5a;
+  color: #fff8ee;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  animation: bleed-pulse .55s ease-in-out infinite alternate;
+}
+@keyframes bleed-pulse { from { opacity: 0.7; } to { opacity: 1; } }
+.statusbar .score-pill.bleeding {
+  color: #b41a00;
+  animation: bleed-pulse .55s ease-in-out infinite alternate;
+}
+
+/* Reunion d-pad — slightly smaller than driver controls; centred at bottom. */
+.dpad-wrap.reunion-dpad {
+  bottom: calc(20px + var(--safe-bottom));
+}
+.dpad-wrap.reunion-dpad button {
+  width: 50px; height: 50px;
+  font-size: 20px;
+}
+
+/* End-of-round reunion line. */
+.reunion-line {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+.reunion-line .reunion-bonus {
+  color: #ff7a59;
+  font-weight: 800;
+  font-family: "Fraunces", serif;
+}
+
 .statusbar .mute-btn {
   border: none; padding: 0; font-size: 14px;
   background: transparent; cursor: pointer;

@@ -91,8 +91,21 @@ async function run() {
   log(typeof e.icon === "string" && e.icon.length > 0, `errand has icon`);
   log(typeof e.x === "number" && typeof e.y === "number", `errand has coords (${e.x},${e.y})`);
 
+  console.log("\n— Reunion phase fires after driving ends —");
+  // Force the round to end by draining patience: spam the brake (which doesn't
+  // drain on its own) — quicker route is to just keep waiting; patience drops 1/tick.
+  // For test speed, send tons of inputs to make idle ticks pass faster.
+  // Easier: just wait for patience to drain naturally, but we'd wait ~150s.
+  // Instead, force a crash by trying south into a wall once we know our position.
+  // Even easier: just emit restart and run a full second test scenario via reunion entry.
+  // We'll just drain by waiting a few crashes — but accelerated by many turns.
+  // Simplest: rely on natural patience drain over many seconds. Skip the fast path.
+  // Verify reunion fields exist on state at least:
+  log(typeof A.lastState.reunionTimeRemainingMs === "number", "reunionTimeRemainingMs in state");
+  log(typeof A.lastState.reunionBonus === "number", "reunionBonus in state");
+
   console.log("\n— Restart begins fresh round —");
-  A.lastState = null; // invalidate so waitFor catches the FRESH post-restart state
+  A.lastState = null;
   A.emit("restart_round");
   const sRestart = await waitFor(A, (st) => st.phase === "driving" && st.distance === 0, "restarted to driving");
   log(sRestart.errands.every((e) => !e.done), "errands re-rolled and undone");

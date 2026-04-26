@@ -3,18 +3,20 @@ import "./style.css";
 import { store } from "./net";
 import type { PublicState, Phase } from "./types";
 import { DriveScene } from "./scenes/DriveScene";
+import { ReunionScene } from "./scenes/ReunionScene";
 import {
   renderLanding, renderWaiting, renderComplete,
   renderStatusBar, renderHint, renderDriverDpad,
-  renderErrandStrip, clearOverlay,
+  renderReunionDpad, renderErrandStrip, clearOverlay,
 } from "./ui/lobby";
 import { sfx } from "./audio";
 
+type SceneName = "drive" | "reunion" | null;
 let phaserGame: Phaser.Game | null = null;
 let booted = false;
-let activeScene: "drive" | null = null;
+let activeScene: SceneName = null;
 let lastPhase: Phase | null = null;
-let pendingShow: { name: "drive" | null; state: PublicState | null } | null = null;
+let pendingShow: { name: SceneName; state: PublicState | null } | null = null;
 
 function ensureGame(): Phaser.Game {
   if (phaserGame) return phaserGame;
@@ -30,6 +32,7 @@ function ensureGame(): Phaser.Game {
     },
   });
   phaserGame.scene.add("DriveScene", DriveScene, false);
+  phaserGame.scene.add("ReunionScene", ReunionScene, false);
 
   phaserGame.events.once("ready", () => {
     booted = true;
@@ -49,19 +52,21 @@ function ensureGame(): Phaser.Game {
   return phaserGame;
 }
 
-function applyShow(name: "drive" | null, state: PublicState | null) {
+function applyShow(name: SceneName, state: PublicState | null) {
   const g = phaserGame!;
   try {
-    if (g.scene.getScene("DriveScene")?.scene.isActive()) g.scene.stop("DriveScene");
+    if (g.scene.getScene("DriveScene")?.scene.isActive())   g.scene.stop("DriveScene");
+    if (g.scene.getScene("ReunionScene")?.scene.isActive()) g.scene.stop("ReunionScene");
   } catch (e) { console.warn("[scene stop]", e); }
   activeScene = name;
   if (!name || !state) return;
   try {
-    if (name === "drive") g.scene.start("DriveScene", { state });
+    if (name === "drive")   g.scene.start("DriveScene",   { state });
+    if (name === "reunion") g.scene.start("ReunionScene", { state });
   } catch (e) { console.warn("[scene start]", e); }
 }
 
-function showScene(name: "drive" | null, state: PublicState | null) {
+function showScene(name: SceneName, state: PublicState | null) {
   ensureGame();
   if (booted) applyShow(name, state);
   else        pendingShow = { name, state };
@@ -85,7 +90,7 @@ function pollWhileStuck(active: boolean) {
     pollTimer = setInterval(() => {
       if (!store.connected) return;
       const p = store.state?.phase;
-      if (p === "complete") store.requestState();
+      if (p === "complete" || p === "reunion") store.requestState();
     }, 2000);
   } else if (!active && pollTimer) {
     clearInterval(pollTimer);
@@ -138,17 +143,34 @@ function render(state: PublicState | null) {
     return;
   }
 
+  if (phase === "reunion") {
+    clearOverlay();
+    renderStatusBar(state);
+    showGameCanvas();
+    if (activeScene !== "reunion") showScene("reunion", state);
+    renderReunionDpad();
+    const remaining = Math.ceil(state.reunionTimeRemainingMs / 1000);
+    renderHint(`Find each other! ${remaining}s left · score is bleeding`);
+    pollWhileStuck(true);
+    return;
+  }
+
   if (phase === "complete") {
     clearOverlay();
     renderStatusBar(state);
-    if (activeScene !== "drive") showScene("drive", state);
+    // Stay in whichever scene we ended in (reunion shows the heart-burst).
+    if (state.driverAvatar && state.navigatorAvatar) {
+      if (activeScene !== "reunion") showScene("reunion", state);
+    } else {
+      if (activeScene !== "drive") showScene("drive", state);
+    }
     if (prev !== "complete") {
       if (state.outcome === "perfect") sfx.win();
     }
     pollWhileStuck(true);
     setTimeout(() => {
       if (store.state?.phase === "complete") renderComplete(state);
-    }, 700);
+    }, 1100);
     return;
   }
   pollWhileStuck(false);

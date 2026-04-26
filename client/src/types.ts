@@ -1,6 +1,6 @@
-import type { Direction, Tile, Errand, Outcome } from "../../shared/game";
+import type { Direction, Tile, Errand, Outcome, Phase } from "../../shared/game";
 
-export type Phase = "waiting" | "ready" | "driving" | "complete";
+export type { Phase };
 export type Role = "driver" | "navigator";
 
 export interface PublicState {
@@ -27,4 +27,9 @@ export interface PublicState {
   crashes: number;
   outcome: Outcome;
   bestScoreThisSession: number;
+  driverAvatar: { x: number; y: number } | null;
+  navigatorAvatar: { x: number; y: number } | null;
+  reunionElapsedMs: number;
+  reunionTimeRemainingMs: number;
+  reunionBonus: number;
 }

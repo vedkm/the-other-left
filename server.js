@@ -7,13 +7,15 @@ import { dirname, join } from "path";
 import {
   MAP, freshRoom, resetRound, makeRoomCode,
   turnLeft, turnRight, forwardOf,
-  classifyDriveTile,
+  classifyDriveTile, isReunionWalkable,
   pickCrashBark,
   tickMsForCombo, comboMultiplier,
-  TICK_MS_BASE,
   PATIENCE_START, PATIENCE_PER_TICK, PATIENCE_PER_CRASH, POST_CRASH_FREEZE_MS,
   COUNTDOWN_MS,
   ERRAND_BASE_SCORE, PERFECT_SATURDAY_BONUS, PATIENCE_BONUS_PER_POINT,
+  REUNION_DECAY_PER_SEC, REUNION_BASE_BONUS, REUNION_MIN_BONUS,
+  REUNION_BONUS_DECAY_PER_SEC, REUNION_TIMEOUT_MS,
+  REUNION_SPAWNS,
 } from "./shared/game.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +52,12 @@ function bothConnected(room) {
 }
 
 function publicState(room, role) {
+  const reunionElapsed = room.reunionStartedAt
+    ? Math.max(0, Date.now() - room.reunionStartedAt)
+    : 0;
+  const reunionTimeRemaining = room.phase === "reunion"
+    ? Math.max(0, REUNION_TIMEOUT_MS - reunionElapsed)
+    : 0;
   return {
     code: room.code,
     phase: room.phase,
@@ -74,6 +82,11 @@ function publicState(room, role) {
     crashes: room.crashes,
     outcome: room.outcome,
     bestScoreThisSession: room.bestScoreThisSession,
+    driverAvatar: room.driverAvatar,
+    navigatorAvatar: room.navigatorAvatar,
+    reunionElapsedMs: reunionElapsed,
+    reunionTimeRemainingMs: reunionTimeRemaining,
+    reunionBonus: room.reunionBonus,
   };
 }
 
@@ -121,25 +134,99 @@ function applyTileEffects(room) {
   // Win condition: all errands done AND back at home
   const allDone = room.errands.every((e) => e.done);
   if (allDone && room.car.x === MAP.home.x && room.car.y === MAP.home.y) {
-    finishRound(room, "perfect");
+    finishDriving(room, "perfect");
   }
 }
 
-function finishRound(room, outcome) {
+// End of driving — apply outcome bonuses, then transition to reunion (the
+// time-pressure mini-game). Reunion settles into "complete" once players touch
+// or the timeout fires.
+function finishDriving(room, outcome) {
   room.outcome = outcome;
-  // Bonus calculations
   if (outcome === "perfect") {
     room.score += PERFECT_SATURDAY_BONUS;
     room.score += Math.round(room.patience * PATIENCE_BONUS_PER_POINT);
   } else {
-    // Partial credit: small bonus for any patience left
     room.score += Math.round(room.patience * (PATIENCE_BONUS_PER_POINT * 0.4));
   }
+  stopTick(room);
+  startReunion(room);
+}
+
+function startReunion(room) {
+  room.phase = "reunion";
+  room.driverAvatar    = { x: REUNION_SPAWNS.driver.x,    y: REUNION_SPAWNS.driver.y };
+  room.navigatorAvatar = { x: REUNION_SPAWNS.navigator.x, y: REUNION_SPAWNS.navigator.y };
+  room.reunionStartedAt = Date.now();
+  room.reunionBonus = 0;
+  room.reunionElapsedMs = 0;
+  if (room.reunionDecayInterval) clearInterval(room.reunionDecayInterval);
+  // Decay tick: 1Hz drains score, also auto-finalizes on timeout.
+  room.reunionDecayInterval = setInterval(() => {
+    if (!rooms.has(room.code) || room.phase !== "reunion") {
+      stopReunion(room);
+      return;
+    }
+    const elapsed = Date.now() - room.reunionStartedAt;
+    room.reunionElapsedMs = elapsed;
+    room.score = Math.max(0, room.score - REUNION_DECAY_PER_SEC);
+    if (elapsed >= REUNION_TIMEOUT_MS) {
+      finalizeRound(room); // timed out — no bonus, just finalize
+      broadcastRoom(room);
+      return;
+    }
+    broadcastRoom(room);
+  }, 1000);
+}
+
+function stopReunion(room) {
+  if (room.reunionDecayInterval) {
+    clearInterval(room.reunionDecayInterval);
+    room.reunionDecayInterval = null;
+  }
+}
+
+// Resume the reunion decay tick after a reconnection — extends the timer
+// by however long the partner was missing so they aren't punished for it.
+function resumeReunion(room, missedMs) {
+  if (room.phase !== "reunion") return;
+  room.reunionStartedAt += Math.max(0, missedMs); // pretend the missed time didn't happen
+  if (room.reunionDecayInterval) clearInterval(room.reunionDecayInterval);
+  room.reunionDecayInterval = setInterval(() => {
+    if (!rooms.has(room.code) || room.phase !== "reunion") {
+      stopReunion(room);
+      return;
+    }
+    const elapsed = Date.now() - room.reunionStartedAt;
+    room.reunionElapsedMs = elapsed;
+    room.score = Math.max(0, room.score - REUNION_DECAY_PER_SEC);
+    if (elapsed >= REUNION_TIMEOUT_MS) {
+      finalizeRound(room);
+      broadcastRoom(room);
+      return;
+    }
+    broadcastRoom(room);
+  }, 1000);
+}
+
+function completeReunion(room) {
+  const elapsedSec = (Date.now() - room.reunionStartedAt) / 1000;
+  const bonus = Math.max(
+    REUNION_MIN_BONUS,
+    Math.round(REUNION_BASE_BONUS - elapsedSec * REUNION_BONUS_DECAY_PER_SEC),
+  );
+  room.score += bonus;
+  room.reunionBonus = bonus;
+  room.reunionElapsedMs = Math.round(elapsedSec * 1000);
+  finalizeRound(room);
+}
+
+function finalizeRound(room) {
+  stopReunion(room);
   if (room.score > room.bestScoreThisSession) {
     room.bestScoreThisSession = room.score;
   }
   room.phase = "complete";
-  stopTick(room);
 }
 
 // Apply patience/crash on bad move; combo reset.
@@ -151,7 +238,7 @@ function handleCrash(room, atX, atY) {
   room.patience -= PATIENCE_PER_CRASH;
   if (room.patience <= 0) {
     room.patience = 0;
-    finishRound(room, "tired");
+    finishDriving(room, "tired");
     return;
   }
   // Brief freeze so the driver can reorient.
@@ -191,7 +278,7 @@ function tickRoom(code) {
   room.patience -= PATIENCE_PER_TICK;
   if (room.patience <= 0) {
     room.patience = 0;
-    finishRound(room, "tired");
+    finishDriving(room, "tired");
     broadcastRoom(room);
     return;
   }
@@ -211,10 +298,12 @@ function expireSession(clientId) {
   }
   if (!room.players.driver && !room.players.navigator) {
     stopTick(room);
+    stopReunion(room);
     rooms.delete(room.code);
     return;
   }
   stopTick(room);
+  stopReunion(room);
   resetRound(room);
   const otherRole = session.role === "driver" ? "navigator" : "driver";
   const otherCid = room.players[otherRole];
@@ -262,6 +351,11 @@ io.on("connection", (socket) => {
         // Resume from where we paused, with a small grace window.
         room.pendingStartAt = Date.now() + 800;
         scheduleNextTick(room);
+      }
+      if (room.phase === "reunion" && bothConnected(room) && !room.reunionDecayInterval) {
+        // Estimate how long the timer was paused — best we can do without
+        // tracking pause time explicitly. Resumes without resetting positions.
+        resumeReunion(room, 0);
       }
     }
   }
@@ -358,12 +452,45 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("reunion_input", ({ action }) => {
+    const session = sessions.get(clientId);
+    if (!session) return;
+    const room = rooms.get(session.code);
+    if (!room || room.phase !== "reunion") return;
+
+    const avatar = session.role === "driver" ? room.driverAvatar : room.navigatorAvatar;
+    if (!avatar) return;
+    const deltas = {
+      up:    { dx: 0,  dy: -1 },
+      down:  { dx: 0,  dy:  1 },
+      left:  { dx: -1, dy:  0 },
+      right: { dx: 1,  dy:  0 },
+    };
+    const d = deltas[action];
+    if (!d) return;
+    const nx = avatar.x + d.dx;
+    const ny = avatar.y + d.dy;
+    if (!isReunionWalkable(MAP, nx, ny)) return;
+    avatar.x = nx;
+    avatar.y = ny;
+
+    // Same tile = reunited!
+    if (
+      room.driverAvatar.x === room.navigatorAvatar.x &&
+      room.driverAvatar.y === room.navigatorAvatar.y
+    ) {
+      completeReunion(room);
+    }
+    broadcastRoom(room);
+  });
+
   socket.on("restart_round", () => {
     const session = sessions.get(clientId);
     if (!session)                      return fail(socket, clientId, "restart_round", "no_session");
     const room = rooms.get(session.code);
     if (!room)                         return fail(socket, clientId, "restart_round", "no_room");
     if (!bothConnected(room))          return fail(socket, clientId, "restart_round", "partner_missing");
+    stopReunion(room);
     resetRound(room);
     room.phase = "driving";
     startTick(room);
@@ -378,7 +505,9 @@ io.on("connection", (socket) => {
     if (session) {
       const room = rooms.get(session.code);
       if (room) {
+        // Pause both timers — neither phase should advance while a partner is missing.
         stopTick(room);
+        stopReunion(room);
         const otherRole = session.role === "driver" ? "navigator" : "driver";
         const otherCid = room.players[otherRole];
         if (otherCid) sendToClient(otherCid, "state_updated", publicState(room, otherRole));

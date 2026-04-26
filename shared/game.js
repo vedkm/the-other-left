@@ -16,6 +16,21 @@ export const ERRAND_BASE_SCORE = 100;
 export const PERFECT_SATURDAY_BONUS = 500;
 export const PATIENCE_BONUS_PER_POINT = 5;
 
+// Reunion phase: time-pressure mini-game between driving and the end screen.
+// Score ticks down while you're separated; touching = stop bleed + bonus that
+// scales inversely with elapsed time. Forces a fast reunion for max payoff.
+export const REUNION_DECAY_PER_SEC = 8;
+export const REUNION_BASE_BONUS    = 500;
+export const REUNION_MIN_BONUS     = 50;
+export const REUNION_BONUS_DECAY_PER_SEC = 12; // bonus shrinks by this per second
+export const REUNION_TIMEOUT_MS    = 60_000;
+export const REUNION_VIS_RADIUS    = 2;        // 5×5 visibility around each avatar
+export const REUNION_SPAWNS = {
+  // Far corners of the map so reunion is a real walk.
+  driver:    { x: 11, y: 17, label: "Maracas Bay"      },
+  navigator: { x: 0,  y: 0,  label: "Home (top-left)" },
+};
+
 export const MAP = {
   id: "errand_date_v1",
   width: 12,
@@ -111,6 +126,15 @@ export function classifyDriveTile(map, x, y) {
   return "move";
 }
 
+// Reunion phase: walls block, everything else (including X and S) is walkable
+// — the driving rules don't apply when you're on foot.
+export function isReunionWalkable(map, x, y) {
+  const t = tileAt(map, x, y);
+  if (t === null) return false;
+  if (t === "#")  return false;
+  return true;
+}
+
 // Trajectory the navigator sees: project N tiles forward in current direction.
 export function projectTrajectory(map, car, maxLen = 6) {
   const out = [];
@@ -181,6 +205,13 @@ export function freshRoom(code) {
     crashes: 0,
     outcome: null,           // "perfect" | "tired" | null
     bestScoreThisSession: 0, // session-only personal best per room
+    // Reunion phase state
+    driverAvatar: null,
+    navigatorAvatar: null,
+    reunionStartedAt: 0,
+    reunionDecayInterval: null,
+    reunionBonus: 0,
+    reunionElapsedMs: 0,
   };
 }
 
@@ -200,6 +231,30 @@ export function resetRound(room, errandCount) {
   room.patience = PATIENCE_START;
   room.crashes = 0;
   room.outcome = null;
+  room.driverAvatar = null;
+  room.navigatorAvatar = null;
+  room.reunionStartedAt = 0;
+  room.reunionBonus = 0;
+  room.reunionElapsedMs = 0;
+}
+
+// Round-end taglines based on overall outcome (drive + reunion combined).
+export const REUNION_BARKS = {
+  fast: [
+    ["Found you fast.", "Made up faster."],
+    ["Quickest reunion this side of Arouca.", "Couples therapy: cancelled."],
+    ["You found me!", "I never doubted us."],
+  ],
+  slow: [
+    ["Where WERE you?", "I went looking the wrong way."],
+    ["This took longer than the actual drive.", "Maracas can wait. We needed this walk."],
+    ["The vibes are mostly recovered.", "Mostly."],
+  ],
+};
+
+export function pickReunionBark(elapsedMs) {
+  const pool = elapsedMs <= 12_000 ? REUNION_BARKS.fast : REUNION_BARKS.slow;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // Funny lines played briefly on a crash (no longer ends the round).

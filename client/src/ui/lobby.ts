@@ -1,6 +1,8 @@
 import { store } from "../net";
 import type { PublicState } from "../types";
 import { sfx, isMuted, setMuted } from "../audio";
+import { turnLeft as gameTurnLeft, turnRight as gameTurnRight } from "../../../shared/game.js";
+import type { Direction } from "../../../shared/game";
 
 const overlay = document.getElementById("overlay")!;
 
@@ -239,20 +241,34 @@ export function renderHint(text: string) {
   overlay.appendChild(h);
 }
 
-export function renderDriverDpad() {
-  // Three big thumb-sized zones across the bottom third of the screen.
-  // Tap anywhere within a zone to trigger its action — no aiming required.
+// Maps a cardinal direction to the on-screen arrow that points that way.
+const DIR_ARROW: Record<Direction, string> = {
+  north: "↑",
+  east:  "→",
+  south: "↓",
+  west:  "←",
+};
+
+export function renderDriverDpad(state: PublicState) {
+  // Three big thumb-sized zones across the bottom of the screen.
+  // Each turn button shows the arrow pointing in the direction the car
+  // will end up facing on screen, so there's no left-vs-right confusion
+  // when the car has rotated.
+  const dir = state.car.direction;
+  const leftArrow  = DIR_ARROW[gameTurnLeft(dir)];
+  const rightArrow = DIR_ARROW[gameTurnRight(dir)];
+
   const wrap = document.createElement("div");
   wrap.className = "driver-controls";
   wrap.innerHTML = `
     <div class="ctrl-zone left"   data-act="turn_left"  aria-label="Turn left">
-      <div class="ctrl-btn"><span class="arrow">←</span><span class="ctrl-label">LEFT</span></div>
+      <div class="ctrl-btn"><span class="arrow">${leftArrow}</span><span class="ctrl-label">TURN</span></div>
     </div>
     <div class="ctrl-zone center" data-act="brake"      aria-label="Brake">
       <div class="ctrl-btn brake">BRAKE</div>
     </div>
     <div class="ctrl-zone right"  data-act="turn_right" aria-label="Turn right">
-      <div class="ctrl-btn"><span class="arrow">→</span><span class="ctrl-label">RIGHT</span></div>
+      <div class="ctrl-btn"><span class="arrow">${rightArrow}</span><span class="ctrl-label">TURN</span></div>
     </div>
   `;
   wrap.querySelectorAll<HTMLDivElement>(".ctrl-zone").forEach((zone) => {
@@ -265,7 +281,6 @@ export function renderDriverDpad() {
       else                 sfx.turn();
       store.driverInput(act);
     };
-    // pointerdown for instant response; covers touch + mouse + pen.
     zone.addEventListener("pointerdown", handler);
   });
   overlay.appendChild(wrap);

@@ -128,7 +128,7 @@ function render(state: PublicState | null) {
     clearOverlay();
     renderStatusBar(state);
     if (state.yourRole === "driver") {
-      renderDriverDpad();
+      renderDriverDpad(state);
       // The big buttons are self-explanatory; only nudge during countdown.
       if (state.countdownRemainingMs > 0) {
         renderHint("Get ready. Car drives itself. Tap LEFT/RIGHT to steer, BRAKE to stop.");

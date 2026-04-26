@@ -94,11 +94,43 @@ function startTick(room) {
   room.tickInterval = setInterval(() => tickRoom(room.code), TICK_MS);
 }
 
+// Apply a single forward step in the car's current direction.
+// Returns "moved" | "win" | "crash". Caller is responsible for broadcasting.
+function attemptForward(room) {
+  const next = forwardOf(room.car, room.car.direction);
+  const result = classifyDriveTile(MAP, next.x, next.y);
+  if (result === "win") {
+    room.car = { ...room.car, x: next.x, y: next.y };
+    room.distance++;
+    room.phase = "complete";
+    room.outcome = "destination_reached";
+    stopTick(room);
+    return "win";
+  }
+  if (result === "crash") {
+    room.crashAt = { x: next.x, y: next.y };
+    room.argument = pickArgument();
+    room.phase = "crashed";
+    stopTick(room);
+    return "crash";
+  }
+  room.car = { ...room.car, x: next.x, y: next.y };
+  room.distance++;
+  return "moved";
+}
+
+// Reschedule the auto-tick from now (used after a manual move so we don't
+// fire too soon after the player has just acted).
+function resetTickInterval(room) {
+  if (!room.tickInterval) return;
+  clearInterval(room.tickInterval);
+  room.tickInterval = setInterval(() => tickRoom(room.code), TICK_MS);
+}
+
 function tickRoom(code) {
   const room = rooms.get(code);
   if (!room) return;
   if (room.phase !== "driving") { stopTick(room); return; }
-  // Pause if a partner is missing — don't run the car into a wall while they're away.
   if (!bothConnected(room)) return;
   if (Date.now() < room.pendingStartAt) return;
 
@@ -108,28 +140,7 @@ function tickRoom(code) {
     return;
   }
 
-  const next = forwardOf(room.car, room.car.direction);
-  const result = classifyDriveTile(MAP, next.x, next.y);
-
-  if (result === "win") {
-    room.car = { ...room.car, x: next.x, y: next.y };
-    room.distance++;
-    room.phase = "complete";
-    room.outcome = "destination_reached";
-    stopTick(room);
-    broadcastRoom(room);
-    return;
-  }
-  if (result === "crash") {
-    room.crashAt = { x: next.x, y: next.y };
-    room.argument = pickArgument();
-    room.phase = "crashed";
-    stopTick(room);
-    broadcastRoom(room);
-    return;
-  }
-  room.car = { ...room.car, x: next.x, y: next.y };
-  room.distance++;
+  attemptForward(room);
   broadcastRoom(room);
 }
 
@@ -275,35 +286,29 @@ io.on("connection", (socket) => {
     const room = rooms.get(session.code);
     if (!room || room.phase !== "driving") return;
 
-    if (action === "turn_left")  { room.car.direction = turnLeft(room.car.direction);  broadcastRoom(room); return; }
-    if (action === "turn_right") { room.car.direction = turnRight(room.car.direction); broadcastRoom(room); return; }
+    if (action === "turn_left" || action === "turn_right") {
+      room.car.direction = action === "turn_left"
+        ? turnLeft(room.car.direction)
+        : turnRight(room.car.direction);
+      // Tap-to-turn-and-go: rotate AND immediately step one tile in the new
+      // direction, so the player feels instant response. Reset the auto-tick
+      // so the next auto-move isn't right on top of this manual one.
+      // During countdown, only rotate (no movement until GO).
+      if (Date.now() >= room.pendingStartAt && room.brakeTicks === 0) {
+        attemptForward(room);
+        resetTickInterval(room);
+      }
+      broadcastRoom(room);
+      return;
+    }
     if (action === "brake") {
       if (room.brakeTicks < BRAKE_MAX) { room.brakeTicks++; broadcastRoom(room); }
       return;
     }
     if (action === "forward") {
       if (Date.now() < room.pendingStartAt) return;
-      const next = forwardOf(room.car, room.car.direction);
-      const result = classifyDriveTile(MAP, next.x, next.y);
-      if (result === "win") {
-        room.car = { ...room.car, x: next.x, y: next.y };
-        room.distance++;
-        room.phase = "complete";
-        room.outcome = "destination_reached";
-        stopTick(room);
-        broadcastRoom(room);
-        return;
-      }
-      if (result === "crash") {
-        room.crashAt = { x: next.x, y: next.y };
-        room.argument = pickArgument();
-        room.phase = "crashed";
-        stopTick(room);
-        broadcastRoom(room);
-        return;
-      }
-      room.car = { ...room.car, x: next.x, y: next.y };
-      room.distance++;
+      attemptForward(room);
+      resetTickInterval(room);
       broadcastRoom(room);
     }
   });

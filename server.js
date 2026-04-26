@@ -155,9 +155,15 @@ function expireSession(clientId) {
   if (otherCid) sendToClient(otherCid, "partner_disconnected");
 }
 
-function fail(socket, action, reason) {
-  console.log(`[fail] ${action}: ${reason}`);
+// fail() now resyncs the client with current state so a missed broadcast
+// or out-of-sync UI auto-corrects rather than getting stuck.
+function fail(socket, clientId, action, reason) {
+  console.log(`[fail] ${action} from ${clientId}: ${reason}`);
   socket.emit("action_failed", { action, reason });
+  const session = sessions.get(clientId);
+  if (!session) return;
+  const room = rooms.get(session.code);
+  if (room) socket.emit("state_updated", publicState(room, session.role));
 }
 
 io.on("connection", (socket) => {
@@ -202,6 +208,15 @@ io.on("connection", (socket) => {
     }
   }
 
+  // Polled by clients that suspect they're out of sync (a missed broadcast).
+  // Cheap; just resends current state.
+  socket.on("request_state", () => {
+    const session = sessions.get(clientId);
+    if (!session) return;
+    const room = rooms.get(session.code);
+    if (room) socket.emit("state_updated", publicState(room, session.role));
+  });
+
   socket.on("create_room", () => {
     expireSession(clientId);
     let code;
@@ -242,12 +257,12 @@ io.on("connection", (socket) => {
 
   socket.on("start_game", () => {
     const session = sessions.get(clientId);
-    if (!session)                      return fail(socket, "start_game", "no_session");
+    if (!session)                      return fail(socket, clientId, "start_game", "no_session");
     const room = rooms.get(session.code);
-    if (!room)                         return fail(socket, "start_game", "no_room");
-    if (!bothConnected(room))          return fail(socket, "start_game", "partner_missing");
+    if (!room)                         return fail(socket, clientId, "start_game", "no_room");
+    if (!bothConnected(room))          return fail(socket, clientId, "start_game", "partner_missing");
     if (room.phase !== "ready" && room.phase !== "complete")
-                                       return fail(socket, "start_game", `wrong_phase:${room.phase}`);
+                                       return fail(socket, clientId, "start_game", `wrong_phase:${room.phase}`);
     resetRound(room);
     room.phase = "driving";
     startTick(room);
@@ -295,11 +310,11 @@ io.on("connection", (socket) => {
 
   socket.on("begin_reunion", () => {
     const session = sessions.get(clientId);
-    if (!session)                      return fail(socket, "begin_reunion", "no_session");
+    if (!session)                      return fail(socket, clientId, "begin_reunion", "no_session");
     const room = rooms.get(session.code);
-    if (!room)                         return fail(socket, "begin_reunion", "no_room");
-    if (!bothConnected(room))          return fail(socket, "begin_reunion", "partner_missing");
-    if (room.phase !== "crashed")      return fail(socket, "begin_reunion", `wrong_phase:${room.phase}`);
+    if (!room)                         return fail(socket, clientId, "begin_reunion", "no_room");
+    if (!bothConnected(room))          return fail(socket, clientId, "begin_reunion", "partner_missing");
+    if (room.phase !== "crashed")      return fail(socket, clientId, "begin_reunion", `wrong_phase:${room.phase}`);
     room.driverAvatar    = { ...MAP.driverSpawnAfterCrash };
     room.navigatorAvatar = { ...MAP.navigatorSpawnAfterCrash };
     room.phase = "reunion";
@@ -339,10 +354,10 @@ io.on("connection", (socket) => {
 
   socket.on("restart_round", () => {
     const session = sessions.get(clientId);
-    if (!session)                      return fail(socket, "restart_round", "no_session");
+    if (!session)                      return fail(socket, clientId, "restart_round", "no_session");
     const room = rooms.get(session.code);
-    if (!room)                         return fail(socket, "restart_round", "no_room");
-    if (!bothConnected(room))          return fail(socket, "restart_round", "partner_missing");
+    if (!room)                         return fail(socket, clientId, "restart_round", "no_room");
+    if (!bothConnected(room))          return fail(socket, clientId, "restart_round", "partner_missing");
     resetRound(room);
     room.phase = "driving";
     startTick(room);

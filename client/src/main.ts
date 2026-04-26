@@ -54,12 +54,32 @@ function ensureGame(): Phaser.Game {
 
 function applyShow(name: "drive" | "reunion" | null, state: PublicState | null) {
   const g = phaserGame!;
-  if (g.scene.getScene("DriveScene")?.scene.isActive())   g.scene.stop("DriveScene");
-  if (g.scene.getScene("ReunionScene")?.scene.isActive()) g.scene.stop("ReunionScene");
+  try {
+    if (g.scene.getScene("DriveScene")?.scene.isActive())   g.scene.stop("DriveScene");
+    if (g.scene.getScene("ReunionScene")?.scene.isActive()) g.scene.stop("ReunionScene");
+  } catch (e) { console.warn("[scene stop]", e); }
   activeScene = name;
   if (!name || !state) return;
-  if (name === "drive")   g.scene.start("DriveScene",   { state });
-  if (name === "reunion") g.scene.start("ReunionScene", { state });
+  try {
+    if (name === "drive")   g.scene.start("DriveScene",   { state });
+    if (name === "reunion") g.scene.start("ReunionScene", { state });
+  } catch (e) { console.warn("[scene start]", e); }
+}
+
+// Periodic state-poll: while waiting in transient phases, ask the server every
+// 2s for the latest state. Recovers from a missed broadcast.
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+function pollWhileStuck(active: boolean) {
+  if (active && !pollTimer) {
+    pollTimer = setInterval(() => {
+      if (!store.connected) return;
+      const p = store.state?.phase;
+      if (p === "crashed" || p === "complete") store.requestState();
+    }, 2000);
+  } else if (!active && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 }
 
 function showScene(name: "drive" | "reunion" | null, state: PublicState | null) {
@@ -124,47 +144,48 @@ function render(state: PublicState | null) {
   }
 
   if (phase === "crashed") {
-    // Keep the drive scene up so the crash effect plays, then show overlay.
-    showGameCanvas();
-    if (activeScene !== "drive") showScene("drive", state);
+    // DOM updates first so a Phaser hiccup can't strand the modal.
     clearOverlay();
     renderStatusBar(state);
-    // Slight delay so the shake/flash plays before the modal pops.
+    showGameCanvas();
+    if (activeScene !== "drive") showScene("drive", state);
+    pollWhileStuck(true);
     setTimeout(() => {
-      // Only render if we're still in crashed phase
       if (store.state?.phase === "crashed") renderCrash(state);
     }, 380);
     return;
   }
 
   if (phase === "reunion") {
-    showGameCanvas();
-    if (activeScene !== "reunion") showScene("reunion", state);
     clearOverlay();
     renderStatusBar(state);
     renderReunionDpad();
     renderHint("Walk with arrows / WASD. You see 5×5 around you.");
+    showGameCanvas();
+    if (activeScene !== "reunion") showScene("reunion", state);
+    pollWhileStuck(false);
     return;
   }
 
   if (phase === "complete") {
+    clearOverlay();
+    renderStatusBar(state);
     if (state.outcome === "reunited") {
       if (activeScene !== "reunion") showScene("reunion", state);
     } else {
       if (activeScene !== "drive") showScene("drive", state);
     }
-    clearOverlay();
-    renderStatusBar(state);
     if (prev !== "complete") {
       if (state.outcome === "destination_reached") sfx.win();
-      // reunite chime is played by the ReunionScene itself
     }
+    pollWhileStuck(true);
     const delay = state.outcome === "reunited" ? 1100 : 700;
     setTimeout(() => {
       if (store.state?.phase === "complete") renderComplete(state);
     }, delay);
     return;
   }
+  pollWhileStuck(false);
 }
 
 // Boot

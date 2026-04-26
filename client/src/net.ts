@@ -105,6 +105,7 @@ class Store {
     this.socket.emit("reunion_input", { action });
   }
   restartRound()                  { this.socket.emit("restart_round"); }
+  requestState()                  { this.socket.emit("request_state"); }
 }
 
 export const store = new Store();

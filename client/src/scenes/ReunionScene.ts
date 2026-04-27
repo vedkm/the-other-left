@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { PublicState } from "../types";
+import type { PublicState, ReunionGrid } from "../types";
 import { store } from "../net";
 import { sfx } from "../audio";
 
@@ -24,6 +24,7 @@ const COLORS = {
 
 export class ReunionScene extends Phaser.Scene {
   private state!: PublicState;
+  private grid!: ReunionGrid;
   private TILE = TILE_MAX;
   private originX = 0;
   private originY = 0;
@@ -41,7 +42,8 @@ export class ReunionScene extends Phaser.Scene {
   init(data?: { state?: PublicState }) {
     if (!data?.state) return;
     this.state = data.state;
-    this.recomputeLayout();
+    this.grid = store.reunionGrid as ReunionGrid;
+    if (this.grid) this.recomputeLayout();
   }
 
   private recomputeLayout() {
@@ -49,16 +51,16 @@ export class ReunionScene extends Phaser.Scene {
     const h = this.scale.height;
     const availW = Math.max(120, w - SIDE_MARGIN * 2);
     const availH = Math.max(120, h - HUD_TOP - HUD_BOT);
-    const fit = Math.floor(Math.min(availW / this.state.map.width, availH / this.state.map.height));
+    const fit = Math.floor(Math.min(availW / this.grid.width, availH / this.grid.height));
     this.TILE = Math.max(TILE_MIN, Math.min(TILE_MAX, fit));
-    this.mapW = this.state.map.width  * this.TILE;
-    this.mapH = this.state.map.height * this.TILE;
+    this.mapW = this.grid.width  * this.TILE;
+    this.mapH = this.grid.height * this.TILE;
     this.originX = Math.round((w - this.mapW) / 2);
     this.originY = Math.round(HUD_TOP + (availH - this.mapH) / 2);
   }
 
   create() {
-    if (!this.state) return;
+    if (!this.state || !this.grid) return;
     this.recomputeLayout();
 
     const board = this.add.graphics();
@@ -100,10 +102,10 @@ export class ReunionScene extends Phaser.Scene {
   }
 
   private drawMap() {
-    const tiles = this.state.map.tiles;
+    const tiles = this.grid.tiles;
     const TILE = this.TILE;
-    for (let y = 0; y < this.state.map.height; y++) {
-      for (let x = 0; x < this.state.map.width; x++) {
+    for (let y = 0; y < this.grid.height; y++) {
+      for (let x = 0; x < this.grid.width; x++) {
         const t = tiles[y][x];
         const g = this.add.graphics();
         const px = x * TILE;
@@ -164,8 +166,8 @@ export class ReunionScene extends Phaser.Scene {
     const me = this.state.yourRole === "driver" ? this.state.driverAvatar : this.state.navigatorAvatar;
     const them = this.state.yourRole === "driver" ? this.state.navigatorAvatar : this.state.driverAvatar;
     if (!me) return;
-    for (let y = 0; y < this.state.map.height; y++) {
-      for (let x = 0; x < this.state.map.width; x++) {
+    for (let y = 0; y < this.grid.height; y++) {
+      for (let x = 0; x < this.grid.width; x++) {
         if (Math.abs(x - me.x) <= VIS_RADIUS && Math.abs(y - me.y) <= VIS_RADIUS) continue;
         this.fogLayer.fillStyle(COLORS.void, 0.92);
         this.fogLayer.fillRect(this.originX + x * this.TILE, this.originY + y * this.TILE, this.TILE, this.TILE);

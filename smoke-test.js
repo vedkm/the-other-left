@@ -1,4 +1,4 @@
-// Smoke test for errand-date mode.
+// Smoke test for road-graph errand-date mode.
 import { io } from "socket.io-client";
 
 const URL = "http://localhost:3000";
@@ -7,8 +7,12 @@ function client(name) {
   const clientId = `test-${name}-${Math.random().toString(36).slice(2)}`;
   const s = io(URL, { transports: ["websocket"], auth: { clientId } });
   s.lastState = null;
+  s.lastGraph = null;
+  s.lastReunionGrid = null;
   s.tag = name;
   s.on("state_updated", (st) => { s.lastState = st; });
+  s.on("graph_pushed", ({ graph }) => { s.lastGraph = graph; });
+  s.on("reunion_grid_pushed", ({ grid }) => { s.lastReunionGrid = grid; });
   s.on("action_failed", (f) => console.warn(`[${name}] action_failed`, f));
   return s;
 }
@@ -42,72 +46,76 @@ async function run() {
   A.emit("create_room");
   const sA1 = await waitFor(A, (st) => !!st?.code, "room created");
   log(sA1.yourRole === "driver", "A is driver");
-  log(sA1.map.width === 12 && sA1.map.height === 18, "map size 12×18");
-  log(Array.isArray(sA1.errands), "errands array present");
+  log(typeof sA1.code === "string" && sA1.code.length === 4, `room code: ${sA1.code}`);
 
   B.emit("join_room", { code: sA1.code });
   await waitFor(B, (st) => st?.phase === "ready", "B ready");
   await waitFor(A, (st) => !!st?.partnerConnected, "A sees partner");
 
-  console.log("\n— Round start with errands rolled —");
+  console.log("\n— Round start: graph + errands roll —");
   A.emit("start_game");
   const sDrive = await waitFor(A, (st) => st.phase === "driving", "driving");
+  // graph_pushed should arrive around the same time
+  await sleep(150);
+  log(!!A.lastGraph, "graph_pushed received");
+  log(Array.isArray(A.lastGraph?.nodes) && A.lastGraph.nodes.length > 4, `graph has ${A.lastGraph?.nodes?.length} nodes`);
+  log(Array.isArray(A.lastGraph?.edges) && A.lastGraph.edges.length > 4, `graph has ${A.lastGraph?.edges?.length} edges`);
+  log(typeof A.lastGraph?.homeNodeId === "string", "graph has homeNodeId");
+  log(Array.isArray(A.lastGraph?.zones) && A.lastGraph.zones.length > 0, `graph has ${A.lastGraph?.zones?.length} zones`);
+  log(Array.isArray(A.lastGraph?.chunks) && A.lastGraph.chunks.length >= 4, `graph has ${A.lastGraph?.chunks?.length} chunks`);
+  log(!!A.lastReunionGrid, "reunion_grid_pushed received");
+  log(A.lastReunionGrid?.width === 12 && A.lastReunionGrid?.height === 12, `reunion grid 12×12`);
+
   log(sDrive.errands.length >= 4 && sDrive.errands.length <= 5, `errand list size = ${sDrive.errands.length}`);
   log(sDrive.errands.every((e) => !e.done), "all errands start undone");
+  log(sDrive.errands.every((e) => typeof e.edgeId === "string" && typeof e.t === "number"), "errands placed on edges with t");
   log(sDrive.score === 0, "score starts at 0");
   log(sDrive.combo === 0, "combo starts at 0");
   log(sDrive.patience === 150, `patience starts at 150 (got ${sDrive.patience})`);
-  log(sDrive.tickMs === 1000, `tickMs base = ${sDrive.tickMs}`);
 
-  console.log("\n— Tap-to-turn-and-go drives the car —");
-  // Wait countdown
-  await sleep(2600);
-  // Drive the car east via repeated turn_right (which rotates AND moves on the new map).
-  // From (1,0) facing south. turn_right → west, but car at col 1, west = col 0 which is '.'. Move ok.
-  // Actually let me drive south manually a few ticks via inaction.
-  await sleep(2000);
-  log(A.lastState.distance >= 1, `auto-moved (distance=${A.lastState.distance})`);
+  console.log("\n— Continuous motion advances the car —");
+  await sleep(2700); // past countdown
+  const beforeT = A.lastState.car?.t ?? 0;
+  const beforeEdge = A.lastState.car?.edgeId;
+  await sleep(1200);
+  const afterT = A.lastState.car?.t ?? 0;
+  const afterEdge = A.lastState.car?.edgeId;
+  const advanced = afterEdge !== beforeEdge || afterT > beforeT;
+  log(advanced, `car advanced (edge ${beforeEdge}→${afterEdge}, t ${beforeT.toFixed(2)}→${afterT.toFixed(2)})`);
+  log(A.lastState.distance > 0, `distance accumulated: ${A.lastState.distance}`);
+  log(A.lastState.patience < 150, `patience drained: ${A.lastState.patience}`);
 
-  console.log("\n— Crash drains patience but does NOT end round —");
-  // Try to crash by turning into a wall. Map row 1 col 1 = '#'. So if car at (1,2) facing east, turn_right → south, attempts (1,3). row 3 col 1 = '#'. Crash.
-  // For test, just keep driving; crashes happen organically. Or force one:
-  // Brake to pause, then turn into a wall.
-  for (let i = 0; i < 3; i++) A.emit("driver_input", { action: "brake" });
-  await sleep(400);
-  // Get current position. Try to crash by turning toward a wall.
-  // Just send turn_right enough times to spin into something. Actually with the map mostly road, crash is hard to force in 1 turn.
-  // Simpler check: skip crash test, just verify patience drains over time.
-  await sleep(2000);
-  log(A.lastState.patience < 150, `patience drains over time (now ${A.lastState.patience})`);
-  log(A.lastState.phase === "driving", "still driving after time passes");
+  console.log("\n— Lane change input —");
+  A.emit("driver_input", { action: "lane_right" });
+  await sleep(150);
+  log(A.lastState.car.targetLane === 1, `targetLane = ${A.lastState.car.targetLane}`);
+  await sleep(350); // past LANE_CHANGE_COOLDOWN_MS (280)
+  A.emit("driver_input", { action: "lane_left" });
+  await sleep(200);
+  log(A.lastState.car.targetLane === 0, `targetLane = ${A.lastState.car.targetLane}`);
 
-  console.log("\n— Errand pickup —");
-  // Find the first errand on the list and warp the car to its tile via simulating moves.
-  // Actually we can't warp; we'd need to navigate. Skip path planning, just verify mechanic by checking if error rate is low.
-  // Check errand mechanic by completing one synthetic via direct server manipulation? No, too invasive.
-  // Just spot-check that errands list has icons/labels:
-  const e = A.lastState.errands[0];
-  log(typeof e.label === "string" && e.label.length > 0, `errand has label: ${e.label}`);
-  log(typeof e.icon === "string" && e.icon.length > 0, `errand has icon`);
-  log(typeof e.x === "number" && typeof e.y === "number", `errand has coords (${e.x},${e.y})`);
+  console.log("\n— Brake reduces speed temporarily —");
+  const beforeBrake = A.lastState.distance;
+  A.emit("driver_input", { action: "brake" });
+  await sleep(150);
+  log(A.lastState.braking === true, "braking flag set");
+  await sleep(900);
+  const afterBrake = A.lastState.distance;
+  log(afterBrake > beforeBrake, `distance still grew while braked: ${beforeBrake}→${afterBrake}`);
 
-  console.log("\n— Reunion phase fires after driving ends —");
-  // Force the round to end by draining patience: spam the brake (which doesn't
-  // drain on its own) — quicker route is to just keep waiting; patience drops 1/tick.
-  // For test speed, send tons of inputs to make idle ticks pass faster.
-  // Easier: just wait for patience to drain naturally, but we'd wait ~150s.
-  // Instead, force a crash by trying south into a wall once we know our position.
-  // Even easier: just emit restart and run a full second test scenario via reunion entry.
-  // We'll just drain by waiting a few crashes — but accelerated by many turns.
-  // Simplest: rely on natural patience drain over many seconds. Skip the fast path.
-  // Verify reunion fields exist on state at least:
+  console.log("\n— Reunion fields exist on state —");
   log(typeof A.lastState.reunionTimeRemainingMs === "number", "reunionTimeRemainingMs in state");
   log(typeof A.lastState.reunionBonus === "number", "reunionBonus in state");
 
-  console.log("\n— Restart begins fresh round —");
+  console.log("\n— Restart re-rolls the graph —");
+  const oldGraphId = A.lastGraph?.id;
   A.lastState = null;
+  A.lastGraph = null;
   A.emit("restart_round");
   const sRestart = await waitFor(A, (st) => st.phase === "driving" && st.distance === 0, "restarted to driving");
+  await sleep(150);
+  log(!!A.lastGraph, "new graph_pushed on restart");
+  log(A.lastGraph?.id !== oldGraphId, `graph id changed: ${oldGraphId} → ${A.lastGraph?.id}`);
   log(sRestart.errands.every((e) => !e.done), "errands re-rolled and undone");
   log(sRestart.patience === 150, `patience reset to 150 (got ${sRestart.patience})`);
 

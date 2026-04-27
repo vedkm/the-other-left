@@ -124,20 +124,23 @@ function render(state: PublicState | null) {
     renderStatusBar(state);
     renderErrandStrip(state);
     showGameCanvas();
-    if (activeScene !== "drive") showScene("drive", state);
+    // Wait for the graph to arrive before mounting DriveScene.
+    if (store.graph) {
+      if (activeScene !== "drive") showScene("drive", state);
+    }
     pollWhileStuck(false);
     if (state.yourRole === "driver") {
       renderDriverDpad(state);
       if (state.countdownRemainingMs > 0) {
-        renderHint("Get ready. Car drives itself. Tap LEFT/RIGHT to steer, BRAKE to stop.");
+        renderHint("Get ready. Car cruises itself — tap LEFT/RIGHT to swerve lanes, BRAKE before hairpins.");
       }
     } else {
       const remaining = state.errands.filter((e) => !e.done).length;
       const hint = state.countdownRemainingMs > 0
-        ? "Get ready. They see only two tiles ahead."
+        ? "Get ready. They only see what's right in front of them."
         : remaining === 0
-          ? "All errands done. Send them home (🏠 in your top-left)."
-          : `${remaining} errand${remaining > 1 ? "s" : ""} left. Yell directions — dotted line shows where they're heading.`;
+          ? "All errands done. Send them home (🏠 marker)."
+          : `${remaining} errand${remaining > 1 ? "s" : ""} left. Call out the road ahead — pothole left, big curve, pick a lane!`;
       renderHint(hint);
     }
     return;
@@ -177,4 +180,7 @@ function render(state: PublicState | null) {
 }
 
 store.subscribe((s) => render(s));
+// Also re-render when the graph arrives, in case state.phase already says
+// "driving" but the graph hadn't loaded yet.
+store.subscribeGraph(() => render(store.state));
 render(null);

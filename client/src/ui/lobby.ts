@@ -1,11 +1,7 @@
 import { store } from "../net";
 import type { PublicState } from "../types";
 import { sfx, isMuted, setMuted } from "../audio";
-import {
-  turnLeft as gameTurnLeft, turnRight as gameTurnRight,
-  pickEndingLine,
-} from "../../../shared/game.js";
-import type { Direction } from "../../../shared/game";
+import { pickEndingLine } from "../../../shared/game.js";
 
 const overlay = document.getElementById("overlay")!;
 
@@ -234,29 +230,22 @@ export function renderErrandStrip(state: PublicState) {
   overlay.appendChild(wrap);
 }
 
-const DIR_ARROW: Record<Direction, string> = {
-  north: "↑", east: "→", south: "↓", west: "←",
-};
-
-export function renderDriverDpad(state: PublicState) {
-  const dir = state.car.direction;
-  const leftArrow  = DIR_ARROW[gameTurnLeft(dir)];
-  const rightArrow = DIR_ARROW[gameTurnRight(dir)];
+export function renderDriverDpad(_state: PublicState) {
   const wrap = document.createElement("div");
   wrap.className = "driver-controls";
   wrap.innerHTML = `
-    <div class="ctrl-zone left"   data-act="turn_left"  aria-label="Turn left">
-      <div class="ctrl-btn"><span class="arrow">${leftArrow}</span><span class="ctrl-label">TURN</span></div>
+    <div class="ctrl-zone left"   data-act="lane_left"  aria-label="Move into left lane">
+      <div class="ctrl-btn"><span class="arrow">⇠</span><span class="ctrl-label">LEFT LANE</span></div>
     </div>
     <div class="ctrl-zone center" data-act="brake"      aria-label="Brake">
       <div class="ctrl-btn brake">BRAKE</div>
     </div>
-    <div class="ctrl-zone right"  data-act="turn_right" aria-label="Turn right">
-      <div class="ctrl-btn"><span class="arrow">${rightArrow}</span><span class="ctrl-label">TURN</span></div>
+    <div class="ctrl-zone right"  data-act="lane_right" aria-label="Move into right lane">
+      <div class="ctrl-btn"><span class="arrow">⇢</span><span class="ctrl-label">RIGHT LANE</span></div>
     </div>
   `;
   wrap.querySelectorAll<HTMLDivElement>(".ctrl-zone").forEach((zone) => {
-    const act = zone.dataset.act as "turn_left" | "turn_right" | "brake";
+    const act = zone.dataset.act as "lane_left" | "lane_right" | "brake";
     const handler = (ev: Event) => {
       ev.preventDefault();
       zone.classList.add("tapped");

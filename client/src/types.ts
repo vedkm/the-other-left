@@ -1,6 +1,6 @@
-import type { Direction, Tile, Errand, Outcome, Phase } from "../../shared/game";
+import type { Phase, CarState, Errand, Outcome, ReunionGrid, SerializedGraph, HydratedGraph } from "../../shared/game";
 
-export type { Phase };
+export type { Phase, ReunionGrid, SerializedGraph, HydratedGraph };
 export type Role = "driver" | "navigator";
 
 export interface PublicState {
@@ -8,17 +8,18 @@ export interface PublicState {
   phase: Phase;
   yourRole: Role;
   partnerConnected: boolean;
-  map: { width: number; height: number; tiles: Tile[][]; zones: { label: string; x: number; y: number }[] };
-  home: { x: number; y: number };
-  car: { x: number; y: number; direction: Direction };
+  graphId: string | null;
+  car: CarState | null;
+  speed: number;
+  homeNodeId: string | null;
   crashAt: { x: number; y: number } | null;
   argument: [string, string] | null;
   distance: number;
   braking: boolean;
-  brakeTicks: number;
   tickMs: number;
   countdownRemainingMs: number;
   errands: Errand[];
+  consumedHazardIds: string[];
   score: number;
   combo: number;
   bestCombo: number;
@@ -32,4 +33,5 @@ export interface PublicState {
   reunionElapsedMs: number;
   reunionTimeRemainingMs: number;
   reunionBonus: number;
+  serverTime: number;
 }

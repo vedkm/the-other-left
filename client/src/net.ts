@@ -1,7 +1,9 @@
 import { io, Socket } from "socket.io-client";
-import type { PublicState } from "./types";
+import type { PublicState, HydratedGraph, ReunionGrid, SerializedGraph } from "./types";
+import { hydrateGraph } from "../../shared/game.js";
 
 type Listener = (state: PublicState | null) => void;
+type GraphListener = (g: HydratedGraph | null) => void;
 type FailListener = (info: { action: string; reason: string }) => void;
 
 function getClientId(): string {
@@ -23,9 +25,12 @@ const ACTION_REASONS: Record<string, string> = {
 
 class Store {
   state: PublicState | null = null;
+  graph: HydratedGraph | null = null;
+  reunionGrid: ReunionGrid | null = null;
   socket: Socket;
   connected = false;
   private listeners = new Set<Listener>();
+  private graphListeners = new Set<GraphListener>();
   private errorListeners = new Set<(msg: string) => void>();
   private failListeners = new Set<FailListener>();
   private connectionListeners = new Set<(c: boolean) => void>();
@@ -45,11 +50,25 @@ class Store {
       this.notify();
     });
 
+    this.socket.on("graph_pushed", ({ graph }: { graph: SerializedGraph }) => {
+      // Re-hydrate only if id changed (avoid wasted work on duplicate pushes).
+      if (this.graph?.id === graph.id) return;
+      this.graph = hydrateGraph(graph);
+      this.notifyGraph();
+    });
+
+    this.socket.on("reunion_grid_pushed", ({ grid }: { grid: ReunionGrid }) => {
+      this.reunionGrid = grid;
+    });
+
     this.socket.on("room_not_found", () => this.error("Room not found."));
     this.socket.on("room_full",      () => this.error("That room is already full."));
     this.socket.on("partner_disconnected", () => {
       this.state = null;
+      this.graph = null;
+      this.reunionGrid = null;
       this.notify();
+      this.notifyGraph();
       this.error("Your partner disconnected.");
     });
 
@@ -85,22 +104,26 @@ class Store {
     return () => this.listeners.delete(fn);
   }
 
+  subscribeGraph(fn: GraphListener): () => void {
+    this.graphListeners.add(fn);
+    return () => this.graphListeners.delete(fn);
+  }
+
   onError(fn: (msg: string) => void): () => void {
     this.errorListeners.add(fn);
     return () => this.errorListeners.delete(fn);
   }
 
   private notify() { for (const l of this.listeners) l(this.state); }
+  private notifyGraph() { for (const l of this.graphListeners) l(this.graph); }
   private error(m: string) { for (const l of this.errorListeners) l(m); }
 
-  // Outbound events.
   createRoom()                    { this.socket.emit("create_room"); }
   joinRoom(code: string)          { this.socket.emit("join_room", { code }); }
   startGame()                     { this.socket.emit("start_game"); }
-  driverInput(action: "forward" | "turn_left" | "turn_right" | "brake") {
+  driverInput(action: "lane_left" | "lane_right" | "brake") {
     this.socket.emit("driver_input", { action });
   }
-  beginReunion()                  { this.socket.emit("begin_reunion"); }
   reunionInput(action: "up" | "down" | "left" | "right") {
     this.socket.emit("reunion_input", { action });
   }
